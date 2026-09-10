@@ -88,8 +88,8 @@ body::before {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: var(--rail) 1fr;
-  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, var(--rail)) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "brand  head"
     "rail   main"
@@ -129,6 +129,7 @@ body::before {
 /* ── header ──────────────────────────────────────────────── */
 .head {
   grid-area: head;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -138,6 +139,10 @@ body::before {
   background: linear-gradient(180deg, var(--gunmetal), var(--night));
 }
 .head__title {
+  /* Must be allowed to shrink, or it pushes the whole header past the
+     viewport on a phone instead of ellipsising. */
+  min-width: 0;
+  flex: 0 1 auto;
   font-size: 13px;
   color: var(--steel);
   letter-spacing: 0.02em;
@@ -258,6 +263,7 @@ body::before {
 /* ── main ────────────────────────────────────────────────── */
 .main {
   grid-area: main;
+  min-width: 0;
   position: relative;
   overflow: hidden;
   display: flex;
@@ -266,6 +272,7 @@ body::before {
 
 .log {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: 26px 24px 8px;
   display: flex;
@@ -281,7 +288,7 @@ body::before {
   border-radius: 100px;
 }
 
-.turn { max-width: 760px; width: 100%; }
+.turn { max-width: 760px; width: 100%; min-width: 0; }
 .turn__who {
   font-family: var(--mono);
   font-size: 9.5px;
@@ -380,6 +387,7 @@ body::before {
 /* ── dock ────────────────────────────────────────────────── */
 .dock {
   grid-area: dock;
+  min-width: 0;
   border-top: 1px solid var(--edge);
   background: linear-gradient(180deg, var(--night), var(--gunmetal));
   padding: 14px 24px calc(14px + var(--safe-b));
@@ -389,7 +397,8 @@ body::before {
 }
 
 .field {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -588,7 +597,7 @@ body::before {
 /* ── responsive ──────────────────────────────────────────── */
 @media (max-width: 860px) {
   .shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "head" "main" "dock";
   }
   .brand { display: none; }
@@ -606,6 +615,9 @@ body::before {
   .dock { padding: 11px 14px calc(11px + var(--safe-b)); gap: 11px; }
   .orb { width: 56px; height: 56px; }
   .head__title { font-size: 12px; }
+  /* The dot already carries the state; the words are the first thing to go. */
+  #connText { display: none; }
+  .pill { padding: 0 8px; }
 }
 @media (min-width: 861px) {
   .rail__toggle { display: none; }
