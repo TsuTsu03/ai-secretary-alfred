@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     llm_provider: LLMProvider = Field(default="gemini", alias="ALFRED_LLM_PROVIDER")
     llm_fallback: bool = Field(default=True, alias="ALFRED_LLM_FALLBACK")
 
-    gemini_model: str = Field(default="gemini-2.5-flash", alias="ALFRED_GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-flash-latest", alias="ALFRED_GEMINI_MODEL")
     groq_model: str = Field(default="moonshotai/kimi-k2-instruct", alias="ALFRED_GROQ_MODEL")
     anthropic_model: str = Field(default="claude-sonnet-5", alias="ALFRED_ANTHROPIC_MODEL")
 
@@ -126,9 +126,23 @@ class Settings(BaseSettings):
     # ---- file access --------------------------------------------------------
     file_roots_raw: str = Field(default="", alias="ALFRED_FILE_ROOTS")
     max_file_read_bytes: int = Field(default=2_000_000, alias="ALFRED_MAX_FILE_READ_BYTES")
+    # Multilingual on purpose: Jansen's notes are Taglish, and an English-only
+    # embedding model quietly fails to match the Tagalog half of a sentence.
+    # 384 dimensions at 0.22 GB runs comfortably on CPU, which matters because
+    # the GPU is already holding Whisper.
     embedding_model: str = Field(
-        default="intfloat/multilingual-e5-small", alias="ALFRED_EMBEDDING_MODEL"
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        alias="ALFRED_EMBEDDING_MODEL",
     )
+    embedding_dimensions: int = Field(default=384, alias="ALFRED_EMBEDDING_DIMENSIONS")
+
+    # ---- indexing -----------------------------------------------------------
+    chunk_chars: int = Field(default=1200, alias="ALFRED_CHUNK_CHARS")
+    chunk_overlap_chars: int = Field(default=180, alias="ALFRED_CHUNK_OVERLAP_CHARS")
+    search_results: int = Field(default=6, alias="ALFRED_SEARCH_RESULTS")
+    # Files bigger than this are indexed by their first N bytes rather than
+    # skipped: a large log or dataset still has a useful head.
+    index_max_chars: int = Field(default=400_000, alias="ALFRED_INDEX_MAX_CHARS")
 
     # ---- server -------------------------------------------------------------
     host: str = Field(default="127.0.0.1", alias="ALFRED_HOST")

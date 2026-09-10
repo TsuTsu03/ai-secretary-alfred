@@ -13,7 +13,7 @@ and an SSE parse per provider.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
 
 Role = Literal["user", "assistant"]
@@ -23,6 +23,69 @@ Role = Literal["user", "assistant"]
 class ChatMessage:
     role: Role
     content: str
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """A tool Alfred may call.
+
+    ``parameters`` is JSON Schema, restricted to the subset every provider
+    accepts: object with typed properties and a required list. Anything
+    cleverer (oneOf, $ref) is silently dropped by at least one of them.
+    """
+
+    name: str
+    description: str
+    parameters: dict
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict
+    # Opaque provider state that has to be echoed back verbatim when the call is
+    # replayed. Gemini's thinking models return a `thoughtSignature` alongside a
+    # functionCall and reject the next request without it:
+    #   400 Function call is missing a thought_signature in functionCall parts.
+    # Meaningless to us, mandatory to them.
+    signature: str = ""
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    id: str
+    name: str
+    content: str
+
+
+@dataclass
+class Turn:
+    """One entry in the neutral transcript the agent loop maintains.
+
+    Providers disagree about how tool exchanges are represented - Gemini uses
+    functionCall/functionResponse parts, the OpenAI-shaped APIs use a
+    tool_calls array and a separate "tool" role. Rather than pick a winner and
+    translate twice, the agent keeps a neutral record and each provider renders
+    it into its own shape.
+    """
+
+    role: str  # "user" | "assistant" | "tool"
+    content: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    tool_results: list[ToolResult] = field(default_factory=list)
+
+
+@dataclass
+class Completion:
+    """One model response: some text, some tool calls, or both."""
+
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+
+    @property
+    def wants_tools(self) -> bool:
+        return bool(self.tool_calls)
 
 
 class ProviderError(RuntimeError):

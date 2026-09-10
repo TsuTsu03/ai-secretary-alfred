@@ -281,6 +281,10 @@ body::before {
   scrollbar-width: thin;
   scrollbar-color: var(--edge-bright) transparent;
 }
+/* Children of a scrolling flex column shrink by default once the content
+   overflows. A single-line trace with `overflow: hidden` obligingly collapses
+   to zero height and vanishes — present in the DOM, invisible on screen. */
+.log > * { flex: 0 0 auto; }
 .log::-webkit-scrollbar { width: 9px; }
 .log::-webkit-scrollbar-thumb {
   background: var(--edge-bright);
@@ -326,6 +330,30 @@ body::before {
   font-size: 12px;
   color: var(--steel-dim);
 }
+
+/* A one-line trace of what Alfred just did. Steel, not amber: this is
+   chrome reporting itself, not something that wants attention. */
+.trace {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--steel-dim);
+  padding-left: 14px;
+  position: relative;
+  max-width: 760px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 9px;
+  width: 6px; height: 1px;
+  background: var(--edge-bright);
+}
+.trace--queued { color: var(--signal-dim); }
+.trace--queued::before { background: var(--signal-dim); }
 
 /* Approval card. Amber because it needs Jansen — the same meaning the
    listening ring carries, so attention never has two colours. */

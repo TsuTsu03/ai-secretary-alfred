@@ -143,6 +143,12 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("LLM providers available, in order: %s", ", ".join(providers))
 
+    # Tools have to be registered before the first turn, or the agent runs
+    # with an empty toolbox and Alfred insists he cannot read anything.
+    from app.tools.files import register_file_tools
+
+    register_file_tools()
+
     roots = settings.file_roots
     logger.info("Readable roots: %s", ", ".join(str(r) for r in roots) or "(none)")
     logger.info("Alfred ready at %s  (data: %s)", settings.base_url, settings.data_dir)

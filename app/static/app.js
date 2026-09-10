@@ -188,6 +188,95 @@ function addTurn(who, text) {
   return body;
 }
 
+/* A one-line trace of what Alfred just did. Without this, a turn that reads
+ * six files is ten silent seconds that look like a hang. */
+function addToolLine(event) {
+  clearEmpty();
+  const line = document.createElement("div");
+  line.className = "trace" + (event.queued ? " trace--queued" : "");
+
+  const label = TOOL_LABELS[event.name] || event.name;
+  const detail = event.arguments && (event.arguments.query || event.arguments.path || "");
+  line.textContent = detail ? `${label} — ${detail}` : label;
+
+  ui.log.appendChild(line);
+  scrollLog();
+}
+
+const TOOL_LABELS = {
+  search_files: "Searched your files",
+  read_file: "Read",
+  list_directory: "Listed",
+  write_file: "Proposed a change to",
+};
+
+/* An approval card. Amber, because it needs Jansen — the same meaning the
+ * listening ring carries, so attention never has two colours. */
+function addConfirmCard(action) {
+  if (document.querySelector(`[data-action="${action.id}"]`)) return;
+  clearEmpty();
+
+  const card = document.createElement("div");
+  card.className = "confirm";
+  card.dataset.action = String(action.id);
+
+  const head = document.createElement("div");
+  head.className = "confirm__head";
+  head.textContent = "Awaiting your approval";
+
+  const summary = document.createElement("div");
+  summary.className = "confirm__summary";
+  summary.textContent = action.summary;
+
+  const detail = document.createElement("pre");
+  detail.className = "confirm__detail";
+  detail.textContent = action.detail || "";
+
+  const row = document.createElement("div");
+  row.className = "confirm__row";
+
+  const approve = document.createElement("button");
+  approve.className = "btn btn--go";
+  approve.textContent = "Approve";
+
+  const decline = document.createElement("button");
+  decline.className = "btn";
+  decline.textContent = "Decline";
+
+  const decide = async (ok) => {
+    approve.disabled = decline.disabled = true;
+    try {
+      const response = await api(`/api/actions/${action.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approve: ok }),
+      });
+      const data = await response.json().catch(() => ({}));
+      row.remove();
+      head.textContent = ok ? "Done" : "Declined";
+      card.classList.remove("confirm--danger");
+      const outcome = document.createElement("div");
+      outcome.className = "confirm__summary";
+      outcome.textContent = data.result || (ok ? "Done, sir." : "Very good, sir.");
+      card.appendChild(outcome);
+      if (!ok) detail.remove();
+    } catch (error) {
+      approve.disabled = decline.disabled = false;
+      if (String(error.message) !== "unauthorised") {
+        addTurn("system", `That did not go through: ${error.message}`);
+      }
+    }
+  };
+
+  approve.addEventListener("click", () => decide(true));
+  decline.addEventListener("click", () => decide(false));
+
+  row.append(approve, decline);
+  card.append(head, summary, detail, row);
+  ui.log.appendChild(card);
+  scrollLog();
+}
+
 function scrollLog() {
   ui.log.scrollTop = ui.log.scrollHeight;
 }
@@ -275,6 +364,10 @@ async function send(text, options) {
             ui.sProvider.textContent = String(payload.provider).toUpperCase();
             ui.sProvider.className = "stat__v stat__v--amber";
           }
+        } else if (payload.type === "tool") {
+          addToolLine(payload);
+        } else if (payload.type === "pending") {
+          addConfirmCard(payload);
         } else if (payload.type === "error") {
           body.textContent = received || payload.message;
           if (received) addTurn("system", payload.message);

@@ -6,6 +6,7 @@ attrs==26.1.0
 av==18.1.0
 certifi==2026.7.22
 cffi==2.1.1
+charset-normalizer==3.5.1
 click==8.5.0
 cloudpickle==3.1.2
 colorama==0.4.6
@@ -13,6 +14,7 @@ ctranslate2==4.8.2
 dlinfo==2.0.0
 espeakng-loader==0.2.4
 fastapi==0.141.1
+fastembed==0.8.0
 faster-whisper==1.2.1
 filelock==3.32.6
 flatbuffers==25.12.19
@@ -29,6 +31,8 @@ iniconfig==2.3.0
 joblib==1.6.0
 kokoro-onnx==0.6.1
 librt==0.15.0
+loguru==0.7.3
+mmh3==5.3.0
 mypy==2.3.1
 mypy_extensions==1.1.0
 numpy==2.5.3
@@ -42,6 +46,7 @@ phonemizer==3.4.0
 pillow==12.3.0
 pluggy==1.6.0
 protobuf==7.36.1
+py_rust_stemmers==0.1.8
 pycparser==3.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
@@ -53,15 +58,21 @@ python-dotenv==1.2.3
 python-multipart==0.0.32
 PyYAML==6.0.3
 qrcode==8.2
+requests==2.34.2
 ruff==0.16.6
 soundfile==0.14.0
 SQLAlchemy==2.0.52
+sqlite-vec==0.1.9
 sqlmodel==0.0.42
 starlette==1.6.0
 tokenizers==0.23.2
 tqdm==4.70.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
+tzdata==2026.3
+urllib3==2.7.0
 uvicorn==0.52.4
+watchdog==6.0.0
 watchfiles==1.2.0
 websockets==17.1
+win32_setctime==1.2.0

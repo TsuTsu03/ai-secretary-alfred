@@ -17,9 +17,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
+from app.agent import Agent
 from app.config import Settings, get_settings
 from app.llm.base import ChatMessage
-from app.llm.router import Router, friendly_error
+from app.llm.router import friendly_error
 from app.persona.prompt import build_system_prompt
 from app.security import auth
 from app.security.paths import PathAccessError
@@ -447,14 +448,26 @@ async def chat(payload: ChatRequest, settings: Settings = Depends(get_settings))
         history = _load_history(session, conversation_id, settings.history_turns)
 
     system = build_system_prompt(settings)
-    router_ = Router(settings)
+    agent = Agent(settings)
 
     async def generate():
         yield _sse({"type": "meta", "conversation_id": conversation_id})
         collected: list[str] = []
         failed = ""
+        seen_steps = 0
         try:
-            async for delta in router_.stream(system, history):
+            async for delta in agent.run(system, history, conversation_id):
+                # Surface tool activity as it happens; a silent ten-second
+                # pause while Alfred reads files looks like a hang.
+                while seen_steps < len(agent.outcome.steps):
+                    step = agent.outcome.steps[seen_steps]
+                    seen_steps += 1
+                    yield _sse({
+                        "type": "tool",
+                        "name": step.tool,
+                        "arguments": step.arguments,
+                        "queued": step.queued,
+                    })
                 collected.append(delta)
                 yield _sse({"type": "delta", "text": delta})
         except Exception as exc:  # surfaced to the user below, never swallowed
@@ -470,15 +483,25 @@ async def chat(payload: ChatRequest, settings: Settings = Depends(get_settings))
                         conversation_id=conversation_id,
                         role=Role.ALFRED,
                         content=answer or failed,
-                        provider=router_.used,
-                        model=router_.used_model,
+                        provider=agent.outcome.provider,
+                        model=agent.outcome.model,
                     )
                 )
-        if router_.used:
+        while seen_steps < len(agent.outcome.steps):
+            step = agent.outcome.steps[seen_steps]
+            seen_steps += 1
+            yield _sse({
+                "type": "tool", "name": step.tool,
+                "arguments": step.arguments, "queued": step.queued,
+            })
+        if agent.outcome.provider:
             yield _sse(
                 {"type": "meta", "conversation_id": conversation_id,
-                 "provider": router_.used, "model": router_.used_model}
+                 "provider": agent.outcome.provider, "model": agent.outcome.model}
             )
+        # Any card raised this turn, so the UI can render it immediately.
+        for action in _pending_for(conversation_id):
+            yield _sse({"type": "pending", **action})
         yield _sse({"type": "done"})
 
     return StreamingResponse(
@@ -492,3 +515,175 @@ async def chat(payload: ChatRequest, settings: Settings = Depends(get_settings))
             "Connection": "keep-alive",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# index
+# ---------------------------------------------------------------------------
+
+
+class IndexStatusResponse(BaseModel):
+    files: int
+    chunks: int
+    semantic: bool
+    progress: dict
+
+
+@router.get(
+    "/api/index",
+    response_model=IndexStatusResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+def index_status() -> IndexStatusResponse:
+    from app.db import session_scope
+    from app.indexer import scanner, store
+
+    with session_scope() as session:
+        counts = store.stats(session)
+    return IndexStatusResponse(**counts, progress=scanner.progress().as_dict())
+
+
+class ReindexRequest(BaseModel):
+    rebuild: bool = False
+
+
+class ReindexResponse(BaseModel):
+    started: bool
+    detail: str
+
+
+@router.post(
+    "/api/index/rebuild",
+    response_model=ReindexResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+def start_index(
+    payload: ReindexRequest, settings: Settings = Depends(get_settings)
+) -> ReindexResponse:
+    """Kick off an indexing run on a background thread.
+
+    Read-only with respect to Jansen's files - it only ever opens them - so it
+    needs no confirmation.
+    """
+    from app.indexer import scanner
+
+    started = scanner.index_in_background(settings, rebuild=payload.rebuild)
+    return ReindexResponse(
+        started=started,
+        detail="Indexing started." if started else "An indexing run is already going.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# pending actions
+# ---------------------------------------------------------------------------
+
+
+def _pending_for(conversation_id: int) -> list[dict]:
+    from sqlmodel import select
+
+    from app.db import session_scope
+    from app.models import ActionStatus, PendingAction
+
+    with session_scope() as session:
+        rows = session.exec(
+            select(PendingAction)
+            .where(PendingAction.conversation_id == conversation_id)
+            .where(PendingAction.status == ActionStatus.PENDING)
+            .order_by(PendingAction.created_at)
+        ).all()
+        return [
+            {
+                "id": row.id,
+                "tool": row.tool_name,
+                "summary": row.summary,
+                "detail": row.detail,
+            }
+            for row in rows
+        ]
+
+
+class PendingListResponse(BaseModel):
+    actions: list[dict]
+
+
+@router.get(
+    "/api/actions",
+    response_model=PendingListResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+def list_actions() -> PendingListResponse:
+    from sqlmodel import select
+
+    from app.db import session_scope
+    from app.models import ActionStatus, PendingAction
+
+    with session_scope() as session:
+        rows = session.exec(
+            select(PendingAction)
+            .where(PendingAction.status == ActionStatus.PENDING)
+            .order_by(PendingAction.created_at)
+        ).all()
+        return PendingListResponse(
+            actions=[
+                {
+                    "id": row.id,
+                    "tool": row.tool_name,
+                    "summary": row.summary,
+                    "detail": row.detail,
+                    "conversation_id": row.conversation_id,
+                }
+                for row in rows
+            ]
+        )
+
+
+class DecisionRequest(BaseModel):
+    approve: bool
+
+
+class DecisionResponse(BaseModel):
+    ok: bool
+    status: str
+    result: str
+
+
+@router.post(
+    "/api/actions/{action_id}",
+    response_model=DecisionResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+async def decide_action(
+    action_id: int, payload: DecisionRequest, settings: Settings = Depends(get_settings)
+) -> DecisionResponse:
+    """Approve or decline a queued action.
+
+    Approval runs the arguments stored on the row, not anything the model says
+    afterwards, so what Jansen saw on the card is exactly what executes.
+    """
+    from datetime import UTC, datetime
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.db import session_scope
+    from app.models import ActionStatus, PendingAction
+    from app.tools import registry as tool_registry
+
+    with session_scope() as session:
+        action = session.get(PendingAction, action_id)
+        if action is None:
+            raise HTTPException(status_code=404, detail="No such action.")
+        if action.status != ActionStatus.PENDING:
+            raise HTTPException(
+                status_code=409, detail=f"That action is already {action.status.value}."
+            )
+        if not payload.approve:
+            action.status = ActionStatus.DECLINED
+            action.resolved_at = datetime.now(UTC)
+            session.add(action)
+            return DecisionResponse(ok=True, status="declined", result="Very good, sir.")
+        action.status = ActionStatus.APPROVED
+        session.add(action)
+
+    ok, result = await run_in_threadpool(tool_registry.execute_approved, action_id, settings)
+    return DecisionResponse(ok=ok, status="executed" if ok else "failed", result=result)

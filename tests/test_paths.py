@@ -181,3 +181,51 @@ def test_no_configured_roots_is_an_error_not_a_free_for_all(tmp_path: Path) -> N
     )  # type: ignore[call-arg]
     with pytest.raises(PathAccessError):
         resolve_readable(tmp_path / "anything.md", settings)
+
+
+# ── denylist precision ───────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "secrets.json", "my-secret.txt", "app.secret", "SECRETS",
+        "aws-credentials.json", "credential.json", "passwords.txt",
+        "passwd", "api_key.txt", "apikey.md",
+    ],
+)
+def test_sensitive_words_are_denied(name: str) -> None:
+    assert is_denied_name(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # The regression this exists for: a substring match on "secret" denies
+        # "secretary", which quietly excluded Alfred's own project folder from
+        # his own index. No error, no symptom - just an assistant that could
+        # not find something he had written himself.
+        "Alfred-AI-Secretary",
+        "secretary-notes.md",
+        "secretariat.md",
+        "credentialing-system.py",
+        "environment.md",
+        "passwordless-auth-notes.md",
+    ],
+)
+def test_sensitive_words_match_tokens_not_substrings(name: str) -> None:
+    assert not is_denied_name(name)
+
+
+def test_alfreds_own_vault_folder_is_readable(tmp_path: Path) -> None:
+    """End to end, since this is the shape that actually broke."""
+    root = tmp_path / "vault"
+    folder = root / "01-Projects" / "Alfred-AI-Secretary"
+    folder.mkdir(parents=True)
+    (folder / "decisions.md").write_text("Kokoro-82M chosen.", encoding="utf-8")
+
+    settings = Settings(
+        ALFRED_FILE_ROOTS=str(root), ALFRED_DATA_DIR=str(tmp_path / "data")
+    )  # type: ignore[call-arg]
+    found = {r.relative.replace("\\", "/") for r in walk_roots(settings)}
+    assert "01-Projects/Alfred-AI-Secretary/decisions.md" in found

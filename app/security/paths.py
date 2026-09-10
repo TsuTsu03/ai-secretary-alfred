@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,10 +80,6 @@ DENIED_NAME_PATTERNS = (
     "id_ed25519*",
     "id_ecdsa*",
     "*.ppk",
-    "*credential*",
-    "*credentials*",
-    "*secret*",
-    "*.secrets",
     "token.json",
     "*.token",
     "service-account*.json",
@@ -92,6 +89,55 @@ DENIED_NAME_PATTERNS = (
     "*.sqlite-wal",
     "*.sqlite-shm",
 )
+
+# Words that mark a file as sensitive, matched as whole tokens rather than as
+# substrings.
+#
+# A plain ``*secret*`` glob looks equivalent and is not: it also denies
+# "secretary", "secretariat", and "credentialing". Alfred's own project folder
+# is called Alfred-AI-Secretary, and that glob quietly excluded it from his own
+# index - a denial with no error message and no obvious symptom, just an
+# assistant that could not find a thing it had written. Token boundaries keep
+# the protection and drop the false positives.
+SENSITIVE_WORD = re.compile(
+    r"(?:^|[^a-z0-9])(secret|secrets|credential|credentials|passwd|password|passwords|apikey|api_key)(?:[^a-z0-9]|$)"
+)
+
+# Machine-generated files. Not a security matter - these are simply worthless
+# to index and ruinously expensive to embed.
+#
+# A single package-lock.json is a few hundred chunks of nothing anybody will
+# ever ask about, and there is one in most project folders. Left in, they
+# dominated the index: the first twenty seconds of a real run covered five
+# files, all of them lockfiles. Excluding them is the difference between an
+# index that finishes in minutes and one that finishes in hours.
+GENERATED_PATTERNS = (
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lock",
+    "bun.lockb",
+    "poetry.lock",
+    "Cargo.lock",
+    "composer.lock",
+    "Gemfile.lock",
+    "go.sum",
+    "*.min.js",
+    "*.min.css",
+    "*.map",
+    "*.lock",
+    "*.pyc",
+    "*.pot",
+    "*.mo",
+    "requirements.lock",
+)
+
+
+def is_generated_name(name: str) -> bool:
+    """True for machine-generated files that are not worth indexing."""
+    lowered = name.lower()
+    return any(fnmatch.fnmatch(lowered, pattern.lower()) for pattern in GENERATED_PATTERNS)
+
 
 # Only text-ish files are read. This is a readability limit, not a security
 # one - the denylist above is what keeps secrets out.
@@ -146,7 +192,9 @@ def is_denied_name(name: str) -> bool:
     lowered = name.lower()
     if name in DENIED_DIR_NAMES or lowered in {d.lower() for d in DENIED_DIR_NAMES}:
         return True
-    return any(fnmatch.fnmatch(lowered, pattern) for pattern in DENIED_NAME_PATTERNS)
+    if any(fnmatch.fnmatch(lowered, pattern) for pattern in DENIED_NAME_PATTERNS):
+        return True
+    return bool(SENSITIVE_WORD.search(lowered))
 
 
 def is_denied_path(path: Path) -> bool:
@@ -223,6 +271,8 @@ def resolve_writable(raw: str | Path, settings: Settings | None = None) -> Resol
 def is_readable_file(path: Path, settings: Settings | None = None) -> bool:
     """Cheap check used by the indexer while walking directories."""
     if path.suffix.lower() not in READABLE_SUFFIXES:
+        return False
+    if is_generated_name(path.name):
         return False
     settings = settings or get_settings()
     try:

@@ -27,7 +27,11 @@ REDACTION = "***REDACTED***"
 # Catches keys pasted into free-form text even when they are not the configured
 # ones - e.g. a key echoed back inside an upstream provider's error body.
 _KEY_PATTERNS = [
-    re.compile(r"AIza[A-Za-z0-9_\-]{20,}"),        # Google / Gemini
+    re.compile(r"AIza[A-Za-z0-9_\-]{20,}"),        # Google / Gemini (classic)
+    # Newer Google AI Studio keys look like "AQ.Ab8RN6...". They do not match
+    # the AIza pattern, so without this an upstream error echoing the key back
+    # would be written to the log file verbatim.
+    re.compile(r"AQ\.[A-Za-z0-9_\-]{20,}"),        # Google / Gemini (current)
     re.compile(r"gsk_[A-Za-z0-9]{20,}"),            # Groq
     re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}"),      # Anthropic
     re.compile(r"sk-or-v1-[A-Za-z0-9]{20,}"),       # OpenRouter
