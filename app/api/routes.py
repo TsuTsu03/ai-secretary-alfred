@@ -13,8 +13,8 @@ import io
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.config import Settings, get_settings
@@ -55,6 +55,8 @@ class StatusResponse(BaseModel):
     llm_ready: bool
     tts_engine: str
     tts_voice: str
+    voice_out: dict
+    voice_in: dict
     roots: list[RootStatus]
     base_url: str
     tailscale_configured: bool
@@ -95,10 +97,39 @@ def status(settings: Settings = Depends(get_settings)) -> StatusResponse:
         llm_ready=bool(providers),
         tts_engine=settings.tts_engine,
         tts_voice=settings.tts_voice,
+        voice_out=_voice_out_status(settings),
+        voice_in=_voice_in_status(settings),
         roots=roots,
         base_url=settings.base_url,
         tailscale_configured=bool(settings.tailscale_hostname),
     )
+
+
+def _voice_out_status(settings: Settings) -> dict:
+    """Whether Alfred can speak, without loading the model to find out."""
+    try:
+        from app.voice import tts
+
+        return tts.describe(settings)
+    except Exception as exc:  # a missing optional dependency must not 500
+        return {"engine": settings.tts_engine, "ready": False, "detail": str(exc)}
+
+
+def _voice_in_status(settings: Settings) -> dict:
+    """Whether Alfred can hear. Reports the chosen model and device only -
+    probing is cheap, loading the model is not, so this never loads it."""
+    try:
+        from app.media import ffmpeg
+        from app.voice import stt
+
+        info = stt.describe(settings)
+        info["ffmpeg"] = ffmpeg.ffmpeg_available()
+        if not info["ffmpeg"]:
+            info["ready"] = False
+            info["detail"] = "FFmpeg is not installed."
+        return info
+    except Exception as exc:
+        return {"ready": False, "detail": str(exc)}
 
 
 def _qr_svg(payload: str) -> str:
@@ -203,6 +234,133 @@ def register_device(
 def _b64(value: str) -> str:
     """Small helper kept for future push payload signing."""
     return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+# ---------------------------------------------------------------------------
+# voice
+# ---------------------------------------------------------------------------
+
+
+class TranscribeResponse(BaseModel):
+    text: str
+    language: str
+    duration_seconds: float
+    elapsed_seconds: float
+    model: str
+    device: str
+    empty: bool
+
+
+@router.post(
+    "/api/voice/transcribe",
+    response_model=TranscribeResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+async def transcribe_voice(
+    audio: UploadFile = File(...), settings: Settings = Depends(get_settings)
+) -> TranscribeResponse:
+    """Turn a recorded clip into text.
+
+    The browser decides the container: Safari sends ``audio/mp4`` and Chrome
+    sends ``audio/webm``. Rather than special-case either, everything goes
+    through FFmpeg and comes out as the 16 kHz mono WAV Whisper wants.
+    """
+    import uuid
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.media import ffmpeg
+    from app.voice import stt
+
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The recording was empty.")
+    if len(raw) > settings.max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"That clip is larger than the {settings.max_upload_mb} MB limit.",
+        )
+
+    if not ffmpeg.ffmpeg_available():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "FFmpeg is not installed, so I cannot decode the recording. "
+                "Install it with:  winget install BtbN.FFmpeg.GPL.8.0"
+            ),
+        )
+
+    settings.ensure_dirs()
+    token = uuid.uuid4().hex
+    # Extension is ignored by FFmpeg (it sniffs the container), but keeping the
+    # upload's own suffix out of the filename means a hostile name cannot reach
+    # the filesystem at all.
+    source = settings.tmp_dir / f"{token}.upload"
+    target = settings.tmp_dir / f"{token}.wav"
+
+    try:
+        source.write_bytes(raw)
+        await run_in_threadpool(ffmpeg.normalize_for_transcription, source, target)
+        transcript = await run_in_threadpool(stt.transcribe, target, settings)
+    except ffmpeg.FFmpegError as exc:
+        logger.warning("Could not decode an uploaded clip: %s", exc)
+        raise HTTPException(status_code=400, detail="I could not decode that recording.") from exc
+    except stt.TranscriptionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        source.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+
+    return TranscribeResponse(
+        text=transcript.text,
+        language=transcript.language,
+        duration_seconds=transcript.duration_seconds,
+        elapsed_seconds=transcript.elapsed_seconds,
+        model=transcript.model,
+        device=transcript.device,
+        empty=transcript.is_empty,
+    )
+
+
+class SpeakRequest(BaseModel):
+    text: str
+
+
+@router.post("/api/voice/speak", dependencies=[Depends(auth.require_auth)])
+async def speak(payload: SpeakRequest, settings: Settings = Depends(get_settings)) -> Response:
+    """Return Alfred's reply as spoken WAV audio.
+
+    POST rather than GET so the token travels in a header. An ``<audio src>``
+    would have forced it into the query string, where it would end up in
+    history and any intermediary's logs.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.voice import tts
+
+    spoken = payload.text.strip()
+    if not spoken:
+        raise HTTPException(status_code=400, detail="There is nothing to say.")
+    # Long replies are chunked by the client; this is a backstop against a
+    # runaway generation turning into a minutes-long synthesis job.
+    if len(spoken) > 4000:
+        spoken = spoken[:4000]
+
+    try:
+        speech = await run_in_threadpool(tts.synthesize, spoken, settings)
+    except tts.TTSUnavailable as exc:
+        # 503 tells the client to fall back to the browser's own voice rather
+        # than to give up on speaking.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return Response(
+        content=speech.audio_wav,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Alfred-Voice": speech.voice,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

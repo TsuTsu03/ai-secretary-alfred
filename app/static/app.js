@@ -22,7 +22,7 @@ const ui = {
   pairBtn: el("pairBtn"), pairVeil: el("pairVeil"), qrBox: el("qrBox"),
   pairUrl: el("pairUrl"), pairClose: el("pairClose"), pairNote: el("pairNote"),
   authVeil: el("authVeil"), tokenInput: el("tokenInput"), tokenSave: el("tokenSave"),
-  sProvider: el("sProvider"), sTts: el("sTts"), sUser: el("sUser"),
+  sProvider: el("sProvider"), sStt: el("sStt"), sTts: el("sTts"), sUser: el("sUser"),
   sTz: el("sTz"), sNet: el("sNet"), sRoots: el("sRoots"),
 };
 
@@ -32,6 +32,10 @@ const state = {
   conversationId: null,
   busy: false,
   audioUnlocked: false,
+  audioCtx: null,
+  recording: null,
+  meter: null,
+  audio: null,
 };
 
 /* ── token ────────────────────────────────────────────────── */
@@ -114,8 +118,16 @@ function renderStatus(data) {
   ui.sProvider.textContent = provider ? provider.toUpperCase() : "None";
   ui.sProvider.className = "stat__v" + (provider ? " stat__v--amber" : " stat__v--off");
 
-  ui.sTts.textContent = data.tts_engine === "kokoro" ? data.tts_voice : "Browser";
-  ui.sTts.className = "stat__v stat__v--off";
+  const out = data.voice_out || {};
+  const inn = data.voice_in || {};
+
+  ui.sStt.textContent = inn.ready ? `${inn.model} ${inn.device}` : "Unavailable";
+  ui.sStt.className = "stat__v" + (inn.ready ? " stat__v--amber" : " stat__v--off");
+  ui.sStt.title = inn.ready ? `Whisper ${inn.model} on ${inn.device}` : (inn.detail || "");
+
+  ui.sTts.textContent = out.engine === "browser" ? "Browser" : (out.ready ? out.voice : "Not installed");
+  ui.sTts.className = "stat__v" + (out.ready ? " stat__v--amber" : " stat__v--off");
+  ui.sTts.title = out.ready ? "" : (out.detail || "");
 
   ui.sUser.textContent = data.user_name || "—";
   ui.sTz.textContent = data.timezone || "—";
@@ -195,10 +207,12 @@ function autoGrow() {
   ui.send.disabled = !ui.input.value.trim() || state.busy;
 }
 
-async function send(text) {
+async function send(text, options) {
   const message = (text || "").trim();
   if (!message || state.busy) return;
+  const byVoice = Boolean(options && options.voice);
 
+  stopSpeaking();
   state.busy = true;
   ui.send.disabled = true;
   addTurn("user", message);
@@ -214,7 +228,7 @@ async function send(text) {
     const response = await api("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, conversation_id: state.conversationId }),
+      body: JSON.stringify({ message, conversation_id: state.conversationId, voice: byVoice }),
     });
 
     if (response.status === 404) {
@@ -276,14 +290,19 @@ async function send(text) {
     }
   } finally {
     state.busy = false;
-    setOrbMode("idle");
     ui.headTitle.textContent = "Standing by";
     autoGrow();
     scrollLog();
+    if (byVoice && received.trim()) {
+      // speak() drives the orb through "speaking" and back to idle itself.
+      speak(received);
+    } else {
+      setOrbMode("idle");
+    }
   }
 }
 
-/* ── voice (Phase 2 attaches the recorder here) ───────────── */
+/* ── voice ────────────────────────────────────────────────── */
 
 /* iOS will not play audio that was not started from a user gesture. Unlocking
  * an AudioContext on the first tap buys the right to speak later, when Alfred
@@ -300,17 +319,263 @@ function unlockAudio() {
   } catch { /* no audio on this device; text still works */ }
 }
 
-function voiceUnavailable() {
-  const secure = window.isSecureContext;
-  setOrbMode("denied");
-  setTimeout(() => setOrbMode("idle"), 1400);
-  addTurn(
-    "system",
-    secure
-      ? "Voice arrives in the next phase, sir."
-      : "Voice needs a secure connection. Reach Alfred over the https://…ts.net address that " +
-        "`tailscale serve` provides — Safari refuses microphone access on plain HTTP."
-  );
+/* Safari refuses getUserMedia outright on a non-secure origin, and it does so
+ * by rejecting rather than by any signal you can check in advance. Detect the
+ * cause ourselves so the message names the real fix. */
+function micUnavailableReason() {
+  if (!window.isSecureContext) {
+    return (
+      "Voice needs a secure connection, sir. Reach me at the https://…ts.net address " +
+      "`tailscale serve` provides — Safari refuses microphone access on plain HTTP."
+    );
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return "This browser will not give me access to a microphone.";
+  }
+  if (typeof MediaRecorder === "undefined") {
+    return "This browser cannot record audio.";
+  }
+  return "";
+}
+
+/* Safari produces audio/mp4; Chrome produces audio/webm. Rather than assume,
+ * ask the browser what it can actually record. The server sends whatever
+ * arrives through FFmpeg, so any of these is fine. */
+function pickMimeType() {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/mp4;codecs=mp4a.40.2",
+    "audio/ogg;codecs=opus",
+  ];
+  if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+}
+
+async function startRecording() {
+  if (state.recording || state.busy) return;
+
+  const reason = micUnavailableReason();
+  if (reason) {
+    setOrbMode("denied");
+    setTimeout(() => setOrbMode("idle"), 1400);
+    addTurn("system", reason);
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  } catch (error) {
+    setOrbMode("denied");
+    setTimeout(() => setOrbMode("idle"), 1400);
+    addTurn(
+      "system",
+      error && error.name === "NotAllowedError"
+        ? "You have not granted me the microphone, sir."
+        : `I could not open the microphone: ${error.message}`
+    );
+    return;
+  }
+
+  const mimeType = pickMimeType();
+  let recorder;
+  try {
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  } catch {
+    recorder = new MediaRecorder(stream);
+  }
+
+  const chunks = [];
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data && event.data.size) chunks.push(event.data);
+  });
+  recorder.addEventListener("stop", () => {
+    stopMeter();
+    stream.getTracks().forEach((track) => track.stop());
+    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    state.recording = null;
+    // Anything this short is a mis-tap, not speech.
+    if (blob.size < 2000 || Date.now() - startedAt < 350) {
+      setOrbMode("idle");
+      ui.headTitle.textContent = "Standing by";
+      return;
+    }
+    sendRecording(blob);
+  });
+
+  const startedAt = Date.now();
+  state.recording = recorder;
+  recorder.start();
+  startMeter(stream);
+  setOrbMode("listening");
+  ui.headTitle.textContent = "Listening";
+}
+
+function stopRecording() {
+  if (state.recording && state.recording.state !== "inactive") {
+    state.recording.stop();
+  }
+}
+
+/* Drive the orb's core from live microphone amplitude. The ring answers the
+ * room rather than performing at it, which is the whole point of putting a
+ * meter here instead of a canned pulse. */
+function startMeter(stream) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = state.audioCtx && state.audioCtx.state !== "closed" ? state.audioCtx : new Ctx();
+    state.audioCtx = ctx;
+    if (ctx.state === "suspended") ctx.resume();
+
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.75;
+    source.connect(analyser);
+
+    const buffer = new Uint8Array(analyser.frequencyBinCount);
+    state.meter = { source, analyser, raf: 0 };
+
+    const tick = () => {
+      analyser.getByteTimeDomainData(buffer);
+      let sum = 0;
+      for (let i = 0; i < buffer.length; i++) {
+        const v = (buffer[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / buffer.length);
+      // Speech RMS sits well below 1. Map it to a restrained 1.0–1.35 scale:
+      // a ring that doubles in size reads as a toy, not an instrument.
+      const amp = Math.min(1.35, 1 + rms * 2.2);
+      ui.orb.style.setProperty("--amp", amp.toFixed(3));
+      state.meter.raf = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch { /* the meter is decoration; recording continues without it */ }
+}
+
+function stopMeter() {
+  if (!state.meter) return;
+  cancelAnimationFrame(state.meter.raf);
+  try { state.meter.source.disconnect(); } catch { /* already gone */ }
+  state.meter = null;
+  ui.orb.style.removeProperty("--amp");
+}
+
+async function sendRecording(blob) {
+  setOrbMode("thinking");
+  ui.headTitle.textContent = "Transcribing";
+
+  const form = new FormData();
+  const extension = (blob.type || "").includes("mp4") ? "m4a" : "webm";
+  form.append("audio", blob, `clip.${extension}`);
+
+  try {
+    const response = await api("/api/voice/transcribe", { method: "POST", body: form });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      setOrbMode("idle");
+      ui.headTitle.textContent = "Standing by";
+      addTurn("system", detail.detail || `I could not make that out (${response.status}).`);
+      return;
+    }
+    const data = await response.json();
+    if (data.empty || !data.text.trim()) {
+      setOrbMode("idle");
+      ui.headTitle.textContent = "Standing by";
+      addTurn("system", "I heard nothing, sir.");
+      return;
+    }
+    send(data.text, { voice: true });
+  } catch (error) {
+    setOrbMode("idle");
+    ui.headTitle.textContent = "Standing by";
+    if (String(error.message) !== "unauthorised") {
+      addTurn("system", `I could not make that out: ${error.message}`);
+    }
+  }
+}
+
+/* Speak a reply. Kokoro if the server has it, otherwise the browser's own
+ * voice — Alfred sounding like a satnav beats Alfred saying nothing. */
+async function speak(text) {
+  const spoken = text.trim();
+  if (!spoken) return;
+
+  try {
+    const response = await api("/api/voice/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: spoken }),
+    });
+    if (response.status === 503) {
+      speakInBrowser(spoken);
+      return;
+    }
+    if (!response.ok) return;
+
+    const blob = await response.blob();
+    await playBlob(blob);
+  } catch (error) {
+    if (String(error.message) !== "unauthorised") speakInBrowser(spoken);
+  }
+}
+
+function playBlob(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    state.audio = audio;
+    setOrbMode("speaking");
+
+    const done = () => {
+      URL.revokeObjectURL(url);
+      state.audio = null;
+      setOrbMode("idle");
+      resolve();
+    };
+    audio.addEventListener("ended", done, { once: true });
+    audio.addEventListener("error", done, { once: true });
+
+    audio.play().catch(() => {
+      // Autoplay was refused because no gesture has unlocked audio yet. Not
+      // worth an error card; the text is already on screen.
+      done();
+    });
+  });
+}
+
+function speakInBrowser(text) {
+  if (!("speechSynthesis" in window)) return;
+  try {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-GB";
+    // Daniel is Safari's British male; anything en-GB beats the default.
+    const voices = speechSynthesis.getVoices();
+    const british = voices.find((v) => /en[-_]GB/i.test(v.lang) && /daniel|male|george/i.test(v.name))
+      || voices.find((v) => /en[-_]GB/i.test(v.lang));
+    if (british) utterance.voice = british;
+    utterance.rate = 1.0;
+    setOrbMode("speaking");
+    utterance.onend = () => setOrbMode("idle");
+    utterance.onerror = () => setOrbMode("idle");
+    speechSynthesis.cancel();
+    speechSynthesis.speak(utterance);
+  } catch { /* nothing more to try */ }
+}
+
+function stopSpeaking() {
+  if (state.audio) {
+    state.audio.pause();
+    state.audio = null;
+  }
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  setOrbMode("idle");
 }
 
 /* ── pairing ──────────────────────────────────────────────── */
@@ -354,10 +619,37 @@ function wire() {
   });
   ui.send.addEventListener("click", () => send(ui.input.value));
 
-  ui.orb.addEventListener("pointerdown", () => {
+  /* Press and hold to talk. pointer* rather than mouse/touch so one code path
+   * covers the trackpad and the phone. */
+  ui.orb.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
     unlockAudio();
-    voiceUnavailable();
+    if (state.audio || state.recording) {
+      // Tapping while Alfred is talking should shut him up, not start a
+      // recording of him talking.
+      stopSpeaking();
+      return;
+    }
+    // Capture so a finger that slides off the button still ends the recording
+    // on release instead of leaving the microphone open.
+    try { ui.orb.setPointerCapture(event.pointerId); } catch { /* not supported */ }
+    startRecording();
   });
+
+  const endHold = (event) => {
+    if (event) {
+      try { ui.orb.releasePointerCapture(event.pointerId); } catch { /* fine */ }
+    }
+    stopRecording();
+  };
+  ui.orb.addEventListener("pointerup", endHold);
+  ui.orb.addEventListener("pointercancel", endHold);
+  // A pointerup that lands outside the button still has to stop the recorder.
+  window.addEventListener("pointerup", () => { if (state.recording) stopRecording(); });
+
+  // Holding the button is a gesture the browser would otherwise treat as a
+  // text selection or a long-press menu on iOS.
+  ui.orb.addEventListener("contextmenu", (event) => event.preventDefault());
 
   ui.railToggle.addEventListener("click", () => {
     const open = ui.rail.dataset.open === "true";

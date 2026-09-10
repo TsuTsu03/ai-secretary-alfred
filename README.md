@@ -18,7 +18,8 @@ See [Cost](#cost).
 | Token pairing, QR handoff | Working |
 | Conversation with streaming replies | Working — needs a free API key |
 | Provider failover (Gemini → Groq) | Working |
-| Voice in and out | Phase 2 |
+| Voice in (faster-whisper, GPU) | Working |
+| Voice out (Kokoro-82M, `bm_george`) | Working |
 | File search and Q&A | Phase 3 |
 | Calendar and mail | Phase 4 |
 | Daily briefing | Phase 5 |
@@ -26,7 +27,8 @@ See [Cost](#cost).
 ## Requirements
 
 - Windows, Python 3.13 (**not 3.14** — `ctranslate2` wheels track 3.13)
-- FFmpeg on `PATH` (`winget install BtbN.FFmpeg.GPL.8.0`) — needed from Phase 2
+- FFmpeg on `PATH` (`winget install BtbN.FFmpeg.GPL.8.0`)
+- An NVIDIA GPU is optional but transcription is roughly 3x realtime on one
 - Tailscale on the laptop and the iPhone, to reach Alfred away from the desk
 
 ## Setup
@@ -35,6 +37,13 @@ See [Cost](#cost).
 py -3.13 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 copy .env.example .env
+
+# Optional but recommended: CUDA runtime for GPU transcription (~700 MB).
+# Only a recent driver is needed - not the full CUDA Toolkit.
+.venv\Scripts\python.exe -m pip install -r requirements-gpu.txt
+
+# Alfred's voice, ~330 MB, one time. Skip it and he uses the browser's voice.
+.venv\Scripts\python.exe scripts\fetch_voice.py
 ```
 
 Get a free Gemini key at <https://aistudio.google.com/apikey> and put it in
@@ -132,6 +141,11 @@ app/
   resolved extension-module DLLs from `PATH` since Python 3.8. Without it CUDA
   reports zero devices, which looks exactly like a driver problem that is not
   there.
+- **`ctranslate2.get_cuda_device_count()` returning 1 does not mean CUDA works.**
+  Device *detection* uses the driver; inference needs cuBLAS and cuDNN, which
+  arrive with `requirements-gpu.txt`. Without them the failure is deferred to
+  the first encode:  `RuntimeError: Library cublas64_12.dll is not found or
+  cannot be loaded`. Startup looks perfectly healthy right up until you speak.
 - **Never pin `ALFRED_WHISPER_LANGUAGE=en`, and never let a `distil-*` or
   `*.en` model be selected.** They cannot transcribe Tagalog, so Taglish comes
   back translated into English instead of transcribed.
@@ -150,3 +164,13 @@ app/
 ```
 
 The browser caches `/assets/app.js` aggressively. Hard-reload after editing it.
+
+Voice can be exercised without a microphone:
+
+```powershell
+# synthesise, then feed Alfred's own voice back through Whisper
+curl -X POST http://127.0.0.1:8757/api/voice/speak -H "Authorization: Bearer <token>" `
+     -H "Content-Type: application/json" -d '{"text":"Good evening, sir."}' -o out.wav
+curl -X POST http://127.0.0.1:8757/api/voice/transcribe -H "Authorization: Bearer <token>" `
+     -F "audio=@out.wav"
+```

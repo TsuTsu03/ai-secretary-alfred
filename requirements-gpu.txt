@@ -1,0 +1,16 @@
+# Optional NVIDIA runtime libraries for CUDA-accelerated transcription.
+#
+# ctranslate2 requires CUDA 12 + cuDNN 9. These pip packages ship the DLLs, so
+# a full CUDA Toolkit install is NOT required - only a recent driver.
+#
+#   .venv\Scripts\python.exe -m pip install -r requirements-gpu.txt
+#
+# Roughly 700 MB. Skip this file to run transcription on CPU.
+#
+# Windows note: the DLLs land inside site-packages, and since Python 3.8
+# Windows does not resolve extension-module dependencies from PATH. Alfred
+# registers these directories himself in app/cuda_bootstrap.py. Without that,
+# CTranslate2 either reports zero CUDA devices or fails at the first encode
+# with "Library cublas64_12.dll is not found or cannot be loaded".
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.24.0.43
