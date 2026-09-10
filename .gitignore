@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.local
+# The monorepo root ignores `.env*`, which would also swallow the example file.
+# That one is setup documentation and must ship.
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+*.onnx
+*.bin
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+.claude/
+secrets/
+token.json
+credentials.json

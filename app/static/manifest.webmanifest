@@ -1,0 +1,17 @@
+{
+  "name": "Alfred",
+  "short_name": "Alfred",
+  "description": "A private AI secretary.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07090c",
+  "theme_color": "#07090c",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "/assets/icons/alfred-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icons/alfred-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icons/alfred-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

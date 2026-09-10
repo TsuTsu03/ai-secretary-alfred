@@ -1,0 +1,35 @@
+[project]
+name = "ai-secretary-alfred"
+version = "0.1.0"
+description = "Alfred - a private, local-first AI secretary with voice and chat, reachable from laptop and phone."
+requires-python = ">=3.13,<3.14"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --tb=short"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",    # line length is the formatter's job
+    "B008",    # FastAPI's Depends()/File() defaults are the documented pattern
+    "RUF012",  # ClassVar annotations add noise to plain config tuples
+    "SIM105",  # contextlib.suppress is not clearer than try/except: pass here
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B017", "SIM117"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+warn_unused_configs = true
+check_untyped_defs = true
+exclude = ['\.venv', 'tests']
