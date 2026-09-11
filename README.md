@@ -20,8 +20,9 @@ See [Cost](#cost).
 | Provider failover (Gemini → Groq) | Working |
 | Voice in (faster-whisper, GPU) | Working |
 | Voice out (Kokoro-82M, `bm_george`) | Working |
-| File search and Q&A | Phase 3 |
-| Calendar and mail | Phase 4 |
+| File search and Q&A | Working |
+| Confirm-before-writing gate | Working |
+| Calendar and Gmail | Working - needs a one-time Google connect |
 | Daily briefing | Phase 5 |
 
 ## Requirements
@@ -55,6 +56,26 @@ Get a free Gemini key at <https://aistudio.google.com/apikey> and put it in
 
 Open <http://127.0.0.1:8757>. The pairing token is printed at startup.
 
+### Giving Alfred your calendar and mailbox
+
+Optional, free, and one-time:
+
+```powershell
+.venv\Scripts\python.exe scripts\connect_google.py
+```
+
+It will tell you exactly what to create in the Google Cloud console (a Desktop
+OAuth client, with the Calendar and Gmail APIs enabled) and where to save the
+downloaded JSON. Keep that project on the free tier with no billing account.
+
+**Alfred asks for `gmail.modify`, not `gmail.send`.** He can read your mail and
+save drafts; he cannot send anything. That is enforced by the scopes on the
+token rather than by code remembering not to call the wrong method — so it
+holds even if the code is wrong.
+
+Calendar and mail tools are only registered once a token exists. Before that
+Alfred simply does not have them, rather than having them and failing.
+
 ## Reaching Alfred from the iPhone
 
 Alfred refuses to bind to a publicly routable interface, so exposing him is a
@@ -79,7 +100,7 @@ look correct, and silently never hear you.
 | Reasoning | Gemini 2.5 Flash free tier → Groq free tier | $0 |
 | Speech in | `faster-whisper`, local GPU | $0 |
 | Speech out | Kokoro-82M (Apache-2.0), voice `bm_george` | $0 |
-| Embeddings | `multilingual-e5-small`, local CPU | $0 |
+| Embeddings | `paraphrase-multilingual-MiniLM-L12-v2`, local CPU | $0 |
 | Remote access | Tailscale personal plan | $0 |
 | HTTPS | `tailscale serve` (Let's Encrypt) | $0 |
 | Calendar, mail | Google API free quota | $0 |
@@ -154,6 +175,17 @@ app/
   prompts rather than earning a 429.
 - **The router must never fall back after emitting a token.** Doing so splices
   two different answers together. `tests/test_router.py` pins this.
+- **Embeddings must be L2-normalised.** sqlite-vec ranks by L2 distance, and
+  this model returns vectors with norms around 5, so unnormalised the "semantic"
+  half of search was partly measuring vector *length*. `EMBEDDING_REVISION` in
+  `app/indexer/embed.py` exists so that changing this forces a reindex instead
+  of leaving incomparable vectors in place.
+- **A naive ISO timestamp is read in your timezone, not UTC.** "Three o'clock"
+  meaning Manila, silently stored as 3am UTC, is an eight-hour error that looks
+  entirely plausible on a confirmation card.
+- **Gemini rejects `role: "function"`** for tool responses (use a `user` turn),
+  and its thinking models reject any replayed `functionCall` that omits the
+  `thoughtSignature` they issued. Neither is obvious from the docs.
 
 ## Development
 

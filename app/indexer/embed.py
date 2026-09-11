@@ -19,6 +19,27 @@ from app.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
+# Bumped whenever the *meaning* of a stored vector changes, even if the model
+# name does not. The index records model + revision, so a bump forces a rebuild
+# rather than leaving old vectors that are no longer comparable to new ones.
+#
+# rev2: vectors are L2-normalised. sqlite-vec ranks by L2 distance, and this
+# model returns vectors with norms around 5, so before normalisation distance
+# was driven as much by magnitude as by direction - the semantic half of the
+# search was partly measuring vector length.
+EMBEDDING_REVISION = "rev2"
+
+
+def _normalise(vector: list[float]) -> list[float]:
+    """Scale to unit length so L2 distance is monotonic with cosine similarity."""
+    total = 0.0
+    for value in vector:
+        total += value * value
+    if total <= 0.0:
+        return vector
+    scale = 1.0 / (total**0.5)
+    return [value * scale for value in vector]
+
 
 class EmbeddingError(RuntimeError):
     """Embedding failed. The message is safe to show the user."""
@@ -69,7 +90,7 @@ def embed_documents(texts: Iterable[str], settings: Settings | None = None) -> l
         return []
     model = _embedder.load(settings)
     try:
-        return [vector.tolist() for vector in model.embed(items)]
+        return [_normalise(vector.tolist()) for vector in model.embed(items)]
     except Exception as exc:
         raise EmbeddingError(f"Could not embed those documents: {exc}") from exc
 
@@ -86,12 +107,18 @@ def embed_query(text: str, settings: Settings | None = None) -> list[float]:
     try:
         if hasattr(model, "query_embed"):
             for vector in model.query_embed([text]):
-                return vector.tolist()
+                return _normalise(vector.tolist())
         for vector in model.embed([text]):
-            return vector.tolist()
+            return _normalise(vector.tolist())
     except Exception as exc:
         raise EmbeddingError(f"Could not embed that query: {exc}") from exc
     raise EmbeddingError("The embedding model returned nothing.")
+
+
+def index_identity(settings: Settings | None = None) -> str:
+    """Model plus revision. A change in either invalidates the stored vectors."""
+    settings = settings or get_settings()
+    return f"{settings.embedding_model}@{EMBEDDING_REVISION}"
 
 
 def dimensions(settings: Settings | None = None) -> int:

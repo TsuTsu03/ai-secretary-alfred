@@ -22,7 +22,8 @@ const ui = {
   pairBtn: el("pairBtn"), pairVeil: el("pairVeil"), qrBox: el("qrBox"),
   pairUrl: el("pairUrl"), pairClose: el("pairClose"), pairNote: el("pairNote"),
   authVeil: el("authVeil"), tokenInput: el("tokenInput"), tokenSave: el("tokenSave"),
-  sProvider: el("sProvider"), sStt: el("sStt"), sTts: el("sTts"), sUser: el("sUser"),
+  sProvider: el("sProvider"), sStt: el("sStt"), sTts: el("sTts"),
+  sGoogle: el("sGoogle"), sMail: el("sMail"), sUser: el("sUser"),
   sTz: el("sTz"), sNet: el("sNet"), sRoots: el("sRoots"),
 };
 
@@ -128,6 +129,32 @@ function renderStatus(data) {
   ui.sTts.textContent = out.engine === "browser" ? "Browser" : (out.ready ? out.voice : "Not installed");
   ui.sTts.className = "stat__v" + (out.ready ? " stat__v--amber" : " stat__v--off");
   ui.sTts.title = out.ready ? "" : (out.detail || "");
+
+  /* Calendar and mail share one connection but deserve separate lines: the
+   * interesting fact about mail is that Alfred can draft and cannot send, and
+   * burying that in a combined "Google: connected" hides the one thing worth
+   * knowing. */
+  const google = data.google || {};
+  const tools = data.tools || [];
+  const hasCalendar = tools.includes("list_events");
+  const hasMail = tools.includes("search_mail");
+
+  if (!google.configured) {
+    ui.sGoogle.textContent = "Not set up";
+    ui.sMail.textContent = "Not set up";
+    ui.sGoogle.title = ui.sMail.title = "Run scripts/connect_google.py to connect.";
+  } else if (!google.connected) {
+    ui.sGoogle.textContent = "Not authorised";
+    ui.sMail.textContent = "Not authorised";
+    ui.sGoogle.title = ui.sMail.title = "Credentials found. Run scripts/connect_google.py.";
+  } else {
+    ui.sGoogle.textContent = hasCalendar ? "Connected" : "Unavailable";
+    ui.sMail.textContent = hasMail ? "Draft only" : "Unavailable";
+    ui.sGoogle.title = google.account || "";
+    ui.sMail.title = "Alfred can read and draft. He cannot send.";
+  }
+  ui.sGoogle.className = "stat__v" + (google.connected && hasCalendar ? " stat__v--amber" : " stat__v--off");
+  ui.sMail.className = "stat__v" + (google.connected && hasMail ? " stat__v--amber" : " stat__v--off");
 
   ui.sUser.textContent = data.user_name || "—";
   ui.sTz.textContent = data.timezone || "—";

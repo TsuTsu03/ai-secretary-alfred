@@ -145,9 +145,26 @@ async def lifespan(app: FastAPI):
 
     # Tools have to be registered before the first turn, or the agent runs
     # with an empty toolbox and Alfred insists he cannot read anything.
+    from app.integrations import google_oauth
     from app.tools.files import register_file_tools
 
     register_file_tools()
+
+    # Google tools are registered only when a token exists. Offering a model a
+    # calendar tool that always answers "not connected" wastes a tool-call
+    # round trip on every scheduling question and teaches it to stop trying.
+    if google_oauth.is_connected(settings):
+        from app.tools.calendar import register_calendar_tools
+        from app.tools.gmail import register_gmail_tools
+
+        register_calendar_tools()
+        register_gmail_tools()
+        logger.info("Google connected as %s.", google_oauth.account_email(settings) or "unknown")
+    elif google_oauth.has_client_secrets(settings):
+        logger.info(
+            "Google credentials found but not authorised. Run "
+            "scripts/connect_google.py to give Alfred the calendar and mailbox."
+        )
 
     roots = settings.file_roots
     logger.info("Readable roots: %s", ", ".join(str(r) for r in roots) or "(none)")

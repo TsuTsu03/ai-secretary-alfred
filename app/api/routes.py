@@ -58,6 +58,8 @@ class StatusResponse(BaseModel):
     tts_voice: str
     voice_out: dict
     voice_in: dict
+    google: dict
+    tools: list[str]
     roots: list[RootStatus]
     base_url: str
     tailscale_configured: bool
@@ -100,10 +102,37 @@ def status(settings: Settings = Depends(get_settings)) -> StatusResponse:
         tts_voice=settings.tts_voice,
         voice_out=_voice_out_status(settings),
         voice_in=_voice_in_status(settings),
+        google=_google_status(settings),
+        tools=_tool_names(),
         roots=roots,
         base_url=settings.base_url,
         tailscale_configured=bool(settings.tailscale_hostname),
     )
+
+
+def _google_status(settings: Settings) -> dict:
+    """Whether the calendar and mailbox are reachable.
+
+    Reports the connected account but never the token, and states plainly that
+    sending is not possible - that is a property of the granted scopes, not a
+    promise this code makes.
+    """
+    try:
+        from app.integrations import google_oauth
+
+        status = google_oauth.describe(settings)
+        status["account"] = (
+            google_oauth.account_email(settings) if status["connected"] else ""
+        )
+        return status
+    except Exception as exc:
+        return {"configured": False, "connected": False, "detail": str(exc)}
+
+
+def _tool_names() -> list[str]:
+    from app.tools import registry as tool_registry
+
+    return sorted(tool.spec.name for tool in tool_registry.all_tools())
 
 
 def _voice_out_status(settings: Settings) -> dict:

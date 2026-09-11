@@ -31,6 +31,33 @@ logger = logging.getLogger(__name__)
 # without tuning; it damps the influence of any single ranking's top hit.
 RRF_K = 60
 
+# Plain RRF assumes both rankings are reasonable. Over 100k chunks that is
+# false: for a rare identifier the nearest vector neighbour is still unrelated,
+# and unweighted fusion promoted it level with an exact keyword hit. Keyword
+# evidence is the more trustworthy of the two when it exists at all.
+VECTOR_WEIGHT = 1.0
+KEYWORD_WEIGHT = 1.4
+
+# Vectors are L2-normalised, so distance runs 0..2 and maps to cosine as
+# d = sqrt(2 - 2cos). 1.15 is roughly cosine 0.34 - below that the neighbour is
+# not about the same subject and only adds noise to the fusion.
+MAX_VECTOR_DISTANCE = 1.15
+
+# Words too common to narrow anything down. Kept small and bilingual: Jansen
+# writes Taglish, so dropping only English stopwords would leave "ang", "ng"
+# and "para" doing the same damage.
+STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with",
+        "is", "are", "was", "were", "be", "been", "it", "its", "this", "that",
+        "what", "which", "who", "how", "when", "where", "why", "do", "does",
+        "did", "my", "me", "i", "you", "your", "about", "from", "at", "by",
+        "as", "can", "could", "would", "should", "have", "has", "had", "not",
+        "ang", "ng", "sa", "na", "ay", "mga", "para", "ako", "ko", "mo",
+        "yung", "ba", "po", "may", "kung", "ito", "iyon", "niya", "nila",
+    }
+)
+
 
 @dataclass(slots=True)
 class SearchHit:
@@ -55,6 +82,12 @@ def serialize(vector: list[float]) -> bytes:
     return struct.pack(f"{len(vector)}f", *vector)
 
 
+def _identity(settings: Settings) -> str:
+    from app.indexer import embed
+
+    return embed.index_identity(settings)
+
+
 def ensure_dimensions(session: Session, settings: Settings | None = None) -> bool:
     """Detect an embedding-model change and report whether a rebuild is needed.
 
@@ -75,17 +108,23 @@ def ensure_dimensions(session: Session, settings: Settings | None = None) -> boo
             text(
                 "INSERT OR REPLACE INTO index_meta (id, embedding_model, dimensions) "
                 "VALUES (1, :m, :d)"
-            ).bindparams(m=settings.embedding_model, d=settings.embedding_dimensions)
+            ).bindparams(m=_identity(settings), d=settings.embedding_dimensions)
         )
         return False
 
     stored_model, stored_dims = row[0], int(row[1])
-    if stored_model == settings.embedding_model and stored_dims == settings.embedding_dimensions:
+    if stored_model == _identity(settings) and stored_dims == settings.embedding_dimensions:
         return False
 
     logger.warning(
-        "Embedding model changed (%s/%d -> %s/%d). The index must be rebuilt.",
-        stored_model, stored_dims, settings.embedding_model, settings.embedding_dimensions,
+        "Embedding identity changed (%s/%d -> %s/%d). The index must be rebuilt.",
+        stored_model, stored_dims, _identity(settings), settings.embedding_dimensions,
+    )
+    session.exec(  # type: ignore[call-overload]
+        text(
+            "INSERT OR REPLACE INTO index_meta (id, embedding_model, dimensions) "
+            "VALUES (1, :m, :d)"
+        ).bindparams(m=_identity(settings), d=settings.embedding_dimensions)
     )
     return True
 
@@ -165,28 +204,43 @@ def _fetch(session: Session, chunk_ids: list[int]) -> dict[int, tuple[Chunk, Ind
 
 
 def _vector_ranking(session: Session, vector: list[float], limit: int) -> list[int]:
+    """Nearest neighbours, with the obviously unrelated ones dropped.
+
+    Without the ceiling, the nearest neighbour to a rare identifier is still
+    returned at rank 0 and fusion treats it as strong evidence. That is how a
+    search for ALFRED_TAILSCALE_HOSTNAME put an unrelated TypeScript file above
+    the config module that defines it.
+    """
     if not vec_available() or not vector:
         return []
     try:
         rows = session.exec(  # type: ignore[call-overload]
             text(
-                f"SELECT rowid FROM {VEC_TABLE} "
+                f"SELECT rowid, distance FROM {VEC_TABLE} "
                 "WHERE embedding MATCH :e AND k = :k ORDER BY distance"
             ).bindparams(e=serialize(vector), k=limit)
         ).all()
-        return [int(row[0]) for row in rows]
     except Exception as exc:
         logger.warning("Vector search failed: %s", exc)
         return []
 
+    return [int(row[0]) for row in rows if float(row[1]) <= MAX_VECTOR_DISTANCE]
 
-def _keyword_ranking(session: Session, query: str, limit: int) -> list[int]:
-    # FTS5 treats punctuation as syntax, so a raw query like `what's the
-    # quote?` is a syntax error rather than a search. Quote each term instead.
-    terms = [t for t in "".join(c if c.isalnum() else " " for c in query).split() if len(t) > 1]
-    if not terms:
-        return []
-    expression = " OR ".join(f'"{t}"' for t in terms)
+
+def _terms(query: str) -> list[str]:
+    """Searchable terms: punctuation stripped, stopwords dropped.
+
+    FTS5 treats punctuation as syntax, so a raw query ending in a question mark
+    is a syntax error rather than a search.
+    """
+    cleaned = "".join(c if c.isalnum() else " " for c in query)
+    words = [w for w in cleaned.split() if len(w) > 1]
+    meaningful = [w for w in words if w.lower() not in STOPWORDS]
+    # A query of nothing but stopwords should still search for something.
+    return meaningful or words
+
+
+def _fts_query(session: Session, expression: str, limit: int) -> list[int]:
     try:
         rows = session.exec(  # type: ignore[call-overload]
             text(
@@ -196,8 +250,38 @@ def _keyword_ranking(session: Session, query: str, limit: int) -> list[int]:
         ).all()
         return [int(row[0]) for row in rows]
     except Exception as exc:
-        logger.warning("Keyword search failed: %s", exc)
+        logger.warning("Keyword search failed (%s): %s", expression[:80], exc)
         return []
+
+
+def _keyword_ranking(session: Session, query: str, limit: int) -> list[int]:
+    """Chunks matching every term first, then chunks matching any of them.
+
+    OR alone was the bug: "how does the confirmation gate stop a write" matched
+    anything containing "write", which across 100k chunks is most of a codebase.
+    Running AND first puts documents carrying the whole phrase above documents
+    that merely share one word with it.
+    """
+    terms = _terms(query)
+    if not terms:
+        return []
+    quoted = ['"' + term + '"' for term in terms]
+
+    ordered: list[int] = []
+    seen: set[int] = set()
+
+    expressions = [" OR ".join(quoted)]
+    if len(quoted) > 1:
+        expressions.insert(0, " AND ".join(quoted))
+
+    for expression in expressions:
+        for chunk_id in _fts_query(session, expression, limit):
+            if chunk_id not in seen:
+                seen.add(chunk_id)
+                ordered.append(chunk_id)
+        if len(ordered) >= limit:
+            break
+    return ordered[:limit]
 
 
 def search(
@@ -214,17 +298,18 @@ def search(
     depth = max(limit * 4, 20)
 
     rankings = [
-        _vector_ranking(session, query_vector or [], depth),
-        _keyword_ranking(session, query, depth),
+        (_vector_ranking(session, query_vector or [], depth), VECTOR_WEIGHT),
+        (_keyword_ranking(session, query, depth), KEYWORD_WEIGHT),
     ]
 
-    # Reciprocal Rank Fusion: a chunk found by both methods outranks one found
-    # brilliantly by only one, which is the behaviour we want - agreement
-    # between two unrelated signals is the strongest evidence available.
+    # Weighted Reciprocal Rank Fusion: a chunk found by both methods outranks
+    # one found brilliantly by only one, since agreement between two unrelated
+    # signals is the strongest evidence available. The weights decide it when
+    # only one ranking has an opinion at all.
     scores: dict[int, float] = {}
-    for ranking in rankings:
+    for ranking, weight in rankings:
         for position, chunk_id in enumerate(ranking):
-            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (RRF_K + position + 1)
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + weight / (RRF_K + position + 1)
 
     ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:limit]
     loaded = _fetch(session, [chunk_id for chunk_id, _ in ordered])
