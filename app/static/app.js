@@ -472,6 +472,9 @@ async function send(text, options) {
 
   const body = addTurn("alfred", "");
   let received = "";
+  // Voice replies are synthesized sentence by sentence as the text arrives,
+  // so the speaking starts with the first full stop rather than the last one.
+  if (byVoice) beginSpeech();
 
   try {
     const response = await api("/api/chat", {
@@ -517,6 +520,7 @@ async function send(text, options) {
         if (payload.type === "delta") {
           received += payload.text;
           body.textContent = received;
+          if (byVoice) feedSpeech(received);
           scrollLog();
         } else if (payload.type === "meta") {
           state.conversationId = payload.conversation_id ?? state.conversationId;
@@ -546,9 +550,9 @@ async function send(text, options) {
     ui.headTitle.textContent = "Standing by";
     autoGrow();
     scrollLog();
-    if (byVoice && received.trim()) {
-      // speak() drives the orb through "speaking" and back to idle itself.
-      speak(received);
+    if (byVoice) {
+      // The speech pipeline owns the orb until the last clip has played.
+      endSpeech(received);
     } else {
       setOrbMode("idle");
     }
@@ -754,28 +758,213 @@ async function sendRecording(blob) {
   }
 }
 
-/* Speak a reply. Kokoro if the server has it, otherwise the browser's own
- * voice — Alfred sounding like a satnav beats Alfred saying nothing. */
-async function speak(text) {
+/* Speak a reply *while it is still being written*.
+ *
+ * Waiting for the whole reply before synthesizing it meant the voice trailed
+ * the text by however long the model took to finish — several seconds on a
+ * long answer. Instead the text stream is cut into sentences as it arrives,
+ * each sentence is synthesized on its own, and playback starts on the first
+ * one. Alfred begins talking roughly when the first full stop appears.
+ *
+ * Two requests are kept in flight at once: enough that the next clip is ready
+ * before the current one ends, not so many that a long answer floods a CPU
+ * that is also running the model. */
+const SPEECH_CONCURRENCY = 2;
+/* …and once the opening sentence passes this length with no full stop in it,
+ * it is cut at the last comma before SPEECH_FIRST_CLAUSE_MAX instead. */
+const SPEECH_FIRST_CLAUSE = 70;
+const SPEECH_FIRST_CLAUSE_MAX = 110;
+/* Later clips get longer. Each synthesis request costs about 1.4s before it
+ * produces a sample, measured against the local Kokoro build, so a reply cut
+ * into many small clips pays that toll many times and the queue falls behind
+ * the playback. Short at the start where latency is felt, long afterwards
+ * where throughput is. */
+const SPEECH_CHUNK_RAMP = [16, 110, 200, 260];
+/* A sentence that never ends still has to be spoken eventually. */
+const SPEECH_MAX_CHUNK = 420;
+/* A full stop in "Mr." or "e.g." is not the end of a sentence. "Sir." is not
+ * on the list: Alfred ends sentences with it constantly and abbreviates it
+ * never. */
+const ABBREVIATION = /\b(mr|mrs|ms|dr|st|prof|no|vs|approx|e\.g|i\.e|etc)\.$/i;
+
+const speech = {
+  gen: 0,        // bumped on every stop; stale callbacks check it and bail
+  active: false,
+  items: [],     // { text, state: idle|loading|ready|failed, blob, controller }
+  cursor: 0,     // index of the next item to play
+  buffer: "",    // reply text not yet cut into a chunk
+  consumed: 0,   // characters of the reply already moved into `buffer`
+  done: false,   // the text stream has finished
+  playing: false,
+  browser: false, // server voice unavailable; fall back to the device's
+};
+
+function beginSpeech() {
+  stopSpeaking();
+  speech.active = true;
+  speech.done = false;
+  speech.browser = false;
+  speech.items = [];
+  speech.cursor = 0;
+  speech.buffer = "";
+  speech.consumed = 0;
+}
+
+/* Hand the pipeline everything received so far; it takes what is new. */
+function feedSpeech(fullText) {
+  if (!speech.active) return;
+  speech.buffer += fullText.slice(speech.consumed);
+  speech.consumed = fullText.length;
+  drainSpeech(false);
+}
+
+function endSpeech(fullText) {
+  if (!speech.active) return;
+  speech.buffer += fullText.slice(speech.consumed);
+  speech.consumed = fullText.length;
+  speech.done = true;
+  drainSpeech(true);
+  if (!speech.items.length) finishSpeech();
+  else playSpeechQueue();
+}
+
+function finishSpeech() {
+  speech.active = false;
+  speech.playing = false;
+  setOrbMode("idle");
+}
+
+function drainSpeech(flush) {
+  for (;;) {
+    const first = speech.items.length === 0;
+    const min = SPEECH_CHUNK_RAMP[Math.min(speech.items.length, SPEECH_CHUNK_RAMP.length - 1)];
+    const cut = findSpeechCut(speech.buffer, min, first ? SPEECH_FIRST_CLAUSE : 0);
+    if (cut <= 0) break;
+    queueSpeech(speech.buffer.slice(0, cut));
+    speech.buffer = speech.buffer.slice(cut);
+  }
+  if (flush) {
+    queueSpeech(speech.buffer);
+    speech.buffer = "";
+  }
+}
+
+/* Where the first speakable chunk of `text` ends, or 0 if it is not there yet.
+ * Boundaries are sentence-final punctuation followed by whitespace, so "3.5"
+ * and "notes.txt" do not split.
+ *
+ * `clause`, when non-zero, is the length past which the opening clip may be
+ * cut at a comma instead. Only the opening clip does this, and only when no
+ * full stop has arrived yet: a long first sentence costs as much to synthesize
+ * as it does to say, and every second of it is silence. */
+function findSpeechCut(text, min, clause) {
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch !== "." && ch !== "!" && ch !== "?" && ch !== "…" && ch !== "\n") continue;
+    let end = i + 1;
+    while (end < text.length && /["')\]]/.test(text[end])) end += 1;
+    const next = text[end];
+    if (next !== undefined && !/\s/.test(next)) continue;
+    if (end < min) continue;
+    if (ABBREVIATION.test(text.slice(0, i + 1))) continue;
+    while (end < text.length && /\s/.test(text[end])) end += 1;
+    return end;
+  }
+  // The opening sentence is running long. Break at its last comma so Alfred
+  // starts talking on the first clause instead of the finished thought.
+  if (clause && text.length >= clause) {
+    const head = text.slice(0, SPEECH_FIRST_CLAUSE_MAX);
+    const mark = Math.max(head.lastIndexOf(", "), head.lastIndexOf("; "));
+    if (mark + 2 >= min) return mark + 2;
+  }
+  // No full stop in sight and the buffer is long: break at the last space so
+  // the listener is not left waiting on a run-on sentence.
+  if (text.length >= SPEECH_MAX_CHUNK) {
+    const space = text.slice(0, SPEECH_MAX_CHUNK).lastIndexOf(" ");
+    if (space >= min) return space + 1;
+  }
+  return 0;
+}
+
+function queueSpeech(text) {
   const spoken = text.trim();
   if (!spoken) return;
+  speech.items.push({ text: spoken, state: "idle", blob: null, controller: null });
+  pumpSpeech();
+  playSpeechQueue();
+}
+
+function pumpSpeech() {
+  let loading = speech.items.filter((item) => item.state === "loading").length;
+  for (const item of speech.items) {
+    if (loading >= SPEECH_CONCURRENCY) break;
+    if (item.state !== "idle") continue;
+    loading += 1;
+    synthesizeChunk(item);
+  }
+}
+
+async function synthesizeChunk(item) {
+  const gen = speech.gen;
+  if (speech.browser) {
+    item.state = "failed";
+    playSpeechQueue();
+    return;
+  }
+  item.state = "loading";
+  const controller = new AbortController();
+  item.controller = controller;
 
   try {
     const response = await api("/api/voice/speak", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: spoken }),
+      body: JSON.stringify({ text: item.text }),
+      signal: controller.signal,
     });
+    if (gen !== speech.gen) return;
     if (response.status === 503) {
-      speakInBrowser(spoken);
-      return;
+      // The model is not installed. Say the rest in the device's own voice.
+      speech.browser = true;
+      item.state = "failed";
+    } else if (!response.ok) {
+      item.state = "failed";
+    } else {
+      item.blob = await response.blob();
+      item.state = "ready";
     }
-    if (!response.ok) return;
-
-    const blob = await response.blob();
-    await playBlob(blob);
   } catch (error) {
-    if (String(error.message) !== "unauthorised") speakInBrowser(spoken);
+    if (gen !== speech.gen || error.name === "AbortError") return;
+    item.state = "failed";
+    if (String(error.message) !== "unauthorised") speech.browser = true;
+  }
+  if (gen !== speech.gen) return;
+  item.controller = null;
+  pumpSpeech();
+  playSpeechQueue();
+}
+
+/* One player, walking the queue in order. It stops when it reaches a clip that
+ * is still synthesizing, and synthesizeChunk() starts it again on arrival. */
+async function playSpeechQueue() {
+  if (speech.playing || !speech.active) return;
+  const gen = speech.gen;
+  speech.playing = true;
+  try {
+    for (;;) {
+      const item = speech.items[speech.cursor];
+      if (!item) break;
+      if (item.state === "idle" || item.state === "loading") break;
+      speech.cursor += 1;
+      if (item.state === "ready" && item.blob) await playBlob(item.blob);
+      else if (speech.browser) await speakInBrowser(item.text);
+      if (gen !== speech.gen) return;
+    }
+  } finally {
+    if (gen === speech.gen) {
+      speech.playing = false;
+      if (speech.done && speech.cursor >= speech.items.length) finishSpeech();
+    }
   }
 }
 
@@ -788,8 +977,7 @@ function playBlob(blob) {
 
     const done = () => {
       URL.revokeObjectURL(url);
-      state.audio = null;
-      setOrbMode("idle");
+      if (state.audio === audio) state.audio = null;
       resolve();
     };
     audio.addEventListener("ended", done, { once: true });
@@ -804,25 +992,42 @@ function playBlob(blob) {
 }
 
 function speakInBrowser(text) {
-  if (!("speechSynthesis" in window)) return;
-  try {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-GB";
-    // Daniel is Safari's British male; anything en-GB beats the default.
-    const voices = speechSynthesis.getVoices();
-    const british = voices.find((v) => /en[-_]GB/i.test(v.lang) && /daniel|male|george/i.test(v.name))
-      || voices.find((v) => /en[-_]GB/i.test(v.lang));
-    if (british) utterance.voice = british;
-    utterance.rate = 1.0;
-    setOrbMode("speaking");
-    utterance.onend = () => setOrbMode("idle");
-    utterance.onerror = () => setOrbMode("idle");
-    speechSynthesis.cancel();
-    speechSynthesis.speak(utterance);
-  } catch { /* nothing more to try */ }
+  return new Promise((resolve) => {
+    if (!("speechSynthesis" in window)) {
+      resolve();
+      return;
+    }
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "en-GB";
+      // Daniel is Safari's British male; anything en-GB beats the default.
+      const voices = speechSynthesis.getVoices();
+      const british = voices.find((v) => /en[-_]GB/i.test(v.lang) && /daniel|male|george/i.test(v.name))
+        || voices.find((v) => /en[-_]GB/i.test(v.lang));
+      if (british) utterance.voice = british;
+      utterance.rate = 1.0;
+      setOrbMode("speaking");
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+      speechSynthesis.speak(utterance);
+    } catch {
+      resolve(); // nothing more to try
+    }
+  });
 }
 
 function stopSpeaking() {
+  speech.gen += 1;
+  speech.active = false;
+  speech.playing = false;
+  speech.done = false;
+  speech.cursor = 0;
+  speech.buffer = "";
+  speech.consumed = 0;
+  for (const item of speech.items) {
+    if (item.controller) item.controller.abort();
+  }
+  speech.items = [];
   if (state.audio) {
     state.audio.pause();
     state.audio = null;
@@ -877,9 +1082,10 @@ function wire() {
   ui.orb.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     unlockAudio();
-    if (state.audio || state.recording) {
+    if (state.audio || speech.active || state.recording) {
       // Tapping while Alfred is talking should shut him up, not start a
-      // recording of him talking.
+      // recording of him talking. `speech.active` covers the gap between two
+      // clips, where no audio element exists but more is queued.
       stopSpeaking();
       return;
     }

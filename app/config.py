@@ -117,6 +117,13 @@ class Settings(BaseSettings):
     # bm_george is Kokoro's British male voice - the closest free match to Alfred.
     tts_voice: str = Field(default="bm_george", alias="ALFRED_TTS_VOICE")
     tts_speed: float = Field(default=1.0, alias="ALFRED_TTS_SPEED")
+    # ONNX Runtime threads for synthesis. 0 means "decide from the CPU".
+    #
+    # Its own default — one thread per logical core — is actively harmful on a
+    # hybrid Intel chip: the efficiency cores hold up every batch the
+    # performance cores have already finished. Measured on an i5-13420H, a
+    # 3.5-second line took 11.8s at the default and 4.1s at four threads.
+    tts_threads: int = Field(default=0, alias="ALFRED_TTS_THREADS")
 
     # ---- persona ------------------------------------------------------------
     user_address: str = Field(default="sir", alias="ALFRED_USER_ADDRESS")

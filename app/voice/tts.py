@@ -105,6 +105,40 @@ def download_models(settings: Settings | None = None, on_progress=None) -> None:
         logger.info("Downloaded %s (%.0f MB).", destination.name, destination.stat().st_size / 1e6)
 
 
+def synthesis_threads(settings: Settings | None = None) -> int:
+    """How many ONNX Runtime threads synthesis should use.
+
+    ONNX Runtime's own default is one thread per logical core, which on a
+    hybrid CPU means every batch waits for the efficiency cores. Half the
+    logical cores, capped at four, matched or beat the default on every count
+    measured here, and by a factor of nearly three at the default's worst.
+    """
+    settings = settings or get_settings()
+    if settings.tts_threads > 0:
+        return settings.tts_threads
+    import os
+
+    cores = os.cpu_count() or 4
+    return max(2, min(4, cores // 2))
+
+
+def _session(model: Path, threads: int):
+    """A Kokoro inference session with the thread count pinned.
+
+    kokoro-onnx builds its own session with runtime defaults, so the session is
+    built here and handed to `from_session`. That constructor reads the model
+    path back off the session object, which is why it is set explicitly.
+    """
+    import onnxruntime as ort
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = threads
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = ort.InferenceSession(str(model), options, providers=["CPUExecutionProvider"])
+    session._model_path = str(model)
+    return session
+
+
 class _Engine:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -131,13 +165,15 @@ class _Engine:
             logger.info("Loading Kokoro voice model...")
             started = time.monotonic()
             try:
-                self._kokoro = Kokoro(str(model), str(voices))
+                self._kokoro = Kokoro.from_session(
+                    _session(model, synthesis_threads(settings)), str(voices)
+                )
                 self._voices = tuple(sorted(self._kokoro.get_voices()))
             except Exception as exc:
                 raise TTSUnavailable(f"Could not load the voice model: {exc}") from exc
             logger.info(
-                "Kokoro ready in %.1fs, %d voices available.",
-                time.monotonic() - started, len(self._voices),
+                "Kokoro ready in %.1fs, %d voices available, %d threads.",
+                time.monotonic() - started, len(self._voices), synthesis_threads(settings),
             )
             return self._kokoro
 
@@ -151,6 +187,12 @@ class _Engine:
 
 
 _engine = _Engine()
+
+# Replies are now synthesized a sentence at a time, so two requests can land at
+# once. Kokoro's phonemizer wraps a single espeak-ng instance, which is not
+# reentrant, so the actual synthesis is serialized. The queueing is what buys
+# the latency, not parallel synthesis: each sentence runs faster than it plays.
+_synth_lock = threading.Lock()
 
 
 def _to_wav(samples, sample_rate: int) -> bytes:
@@ -189,14 +231,15 @@ def synthesize(text: str, settings: Settings | None = None, voice: str = "") -> 
 
     started = time.monotonic()
     try:
-        samples, sample_rate = kokoro.create(
-            spoken,
-            voice=chosen,
-            speed=settings.tts_speed,
-            # en-gb, not en-us: the voice is British and the phonemizer has to
-            # agree with it, or the vowels come out mid-Atlantic.
-            lang="en-gb",
-        )
+        with _synth_lock:
+            samples, sample_rate = kokoro.create(
+                spoken,
+                voice=chosen,
+                speed=settings.tts_speed,
+                # en-gb, not en-us: the voice is British and the phonemizer has
+                # to agree with it, or the vowels come out mid-Atlantic.
+                lang="en-gb",
+            )
     except Exception as exc:
         raise TTSUnavailable(f"Speech synthesis failed: {exc}") from exc
 
@@ -207,6 +250,33 @@ def synthesize(text: str, settings: Settings | None = None, voice: str = "") -> 
         elapsed_seconds=time.monotonic() - started,
         characters=len(spoken),
     )
+
+
+def warm(settings: Settings | None = None) -> bool:
+    """Load Kokoro now so the first reply does not pay for it.
+
+    Loading the model takes a few seconds, and it used to happen inside the
+    first `/api/voice/speak` call — that is, in the silence right after Alfred
+    finishes a sentence, which is the worst possible place to spend it.
+    Returns False when there is nothing to warm (no model, browser engine).
+    """
+    settings = settings or get_settings()
+    if settings.tts_engine != "kokoro" or not models_present(settings):
+        return False
+    try:
+        _engine.load(settings)
+    except TTSUnavailable as exc:
+        logger.warning("Voice warm-up skipped: %s", exc)
+        return False
+    return True
+
+
+def warm_in_background(settings: Settings | None = None) -> None:
+    """Warm the voice on a daemon thread; never block startup on it."""
+    settings = settings or get_settings()
+    if settings.tts_engine != "kokoro" or not models_present(settings):
+        return
+    threading.Thread(target=warm, args=(settings,), name="tts-warm", daemon=True).start()
 
 
 def describe(settings: Settings | None = None) -> dict:

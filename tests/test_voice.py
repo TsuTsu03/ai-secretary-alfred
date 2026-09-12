@@ -157,3 +157,39 @@ def test_default_voice_is_british() -> None:
 def test_empty_text_is_refused(settings: Settings) -> None:
     with pytest.raises(tts.TTSUnavailable):
         tts.synthesize("   ", settings)
+
+
+def test_warming_without_the_model_is_a_no_op(settings: Settings) -> None:
+    """Startup must not fail, or block, when the voice was never downloaded."""
+    assert tts.warm(settings) is False
+
+
+def test_warming_is_skipped_for_the_browser_engine(tmp_path: Path) -> None:
+    browser = Settings(
+        ALFRED_DATA_DIR=str(tmp_path / "d"), ALFRED_TTS_ENGINE="browser"
+    )  # type: ignore[call-arg]
+    assert tts.warm(browser) is False
+
+
+def test_background_warming_starts_no_thread_without_the_model(settings: Settings) -> None:
+    import threading
+
+    before = threading.active_count()
+    tts.warm_in_background(settings)
+    assert threading.active_count() == before
+
+
+def test_thread_count_is_capped_below_the_core_count(settings: Settings) -> None:
+    """ONNX Runtime's one-thread-per-core default is slower on a hybrid CPU."""
+    import os
+
+    threads = tts.synthesis_threads(settings)
+    assert 2 <= threads <= 4
+    assert threads <= max(2, (os.cpu_count() or 4))
+
+
+def test_an_explicit_thread_count_wins(tmp_path: Path) -> None:
+    pinned = Settings(
+        ALFRED_DATA_DIR=str(tmp_path / "d"), ALFRED_TTS_THREADS=7
+    )  # type: ignore[call-arg]
+    assert tts.synthesis_threads(pinned) == 7

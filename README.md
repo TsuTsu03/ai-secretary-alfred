@@ -225,6 +225,16 @@ app/
 - **A naive ISO timestamp is read in your timezone, not UTC.** "Three o'clock"
   meaning Manila, silently stored as 3am UTC, is an eight-hour error that looks
   entirely plausible on a confirmation card.
+- **ONNX Runtime's default thread count is a trap on a hybrid CPU.** One
+  thread per logical core means every batch waits for the efficiency cores. On
+  an i5-13420H a 3.5-second line took 11.8s to synthesize at the default and
+  4.1s at four threads. `ALFRED_TTS_THREADS` pins it; blank picks half the
+  logical cores, capped at four.
+- **Kokoro on CPU is slower than speech.** Roughly 0.7-0.9x realtime here, plus
+  about 1.4s of fixed cost per request, which is why replies are spoken in a
+  short opening clip and progressively longer ones after it. The voice starts
+  with the first sentence rather than the last, but a long answer still drifts
+  behind the text. A GPU execution provider is the only real fix.
 - **Gemini rejects `role: "function"`** for tool responses (use a `user` turn),
   and its thinking models reject any replayed `functionCall` that omits the
   `thoughtSignature` they issued. Neither is obvious from the docs.

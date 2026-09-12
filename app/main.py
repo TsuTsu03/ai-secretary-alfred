@@ -173,6 +173,12 @@ async def lifespan(app: FastAPI):
 
     scheduler.start(settings)
 
+    # Load the voice model off the critical path. Spoken replies start one
+    # sentence at a time, so a cold model would stall the very first one.
+    from app.voice import tts
+
+    tts.warm_in_background(settings)
+
     logger.info("Alfred ready at %s  (data: %s)", settings.base_url, settings.data_dir)
     try:
         yield
