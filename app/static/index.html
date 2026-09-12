@@ -3,673 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#07090c">
+<meta name="theme-color" content="#080a0c">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Alfred">
-<title>Alfred</title>
+<title>Alfred | The Dark Knight</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/assets/icons/alfred-180.png">
-<style>
-/* ─────────────────────────────────────────────────────────────
-   Alfred — HUD
-
-   Palette is Dark Knight, not Iron Man: gunmetal and cold steel
-   blue, with a single warm amber that means exactly one thing —
-   "live, or waiting on you". Listening state and approval cards
-   share it deliberately so attention has one colour, never two
-   competing ones. Red appears only for destructive acts.
-   ───────────────────────────────────────────────────────────── */
-:root {
-  --void:        #07090c;
-  --night:       #0b0e13;
-  --gunmetal:    #12161d;
-  --gunmetal-2:  #171c25;
-  --edge:        #222a36;
-  --edge-bright: #33404f;
-
-  --ice:         #dfe6ef;
-  --steel:       #8296ad;
-  --steel-dim:   #5a6779;
-
-  --signal:      #f0a830;
-  --signal-soft: #e8b04b;
-  --signal-dim:  #7d5a1d;
-  --signal-glow: rgba(240, 168, 48, 0.30);
-
-  --danger:      #c85560;
-  --danger-dim:  #6d2a31;
-
-  --ui: ui-sans-serif, -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
-
-  --rail: 248px;
-  --dock: 92px;
-  --r: 3px;
-
-  --safe-t: env(safe-area-inset-top, 0px);
-  --safe-b: env(safe-area-inset-bottom, 0px);
-}
-
-* { box-sizing: border-box; }
-
-html, body {
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  background: var(--void);
-  color: var(--ice);
-  font-family: var(--ui);
-  font-size: 15px;
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-  overscroll-behavior: none;
-}
-
-/* Cold vignette + a barely-there grid. Restrained on purpose: Nolan's
-   frame is clean and cold, not a glitching cyberpunk overlay. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    radial-gradient(120% 90% at 50% -10%, rgba(56, 78, 104, 0.16), transparent 60%),
-    radial-gradient(100% 100% at 50% 120%, rgba(0, 0, 0, 0.7), transparent 55%),
-    linear-gradient(rgba(51, 64, 79, 0.30) 1px, transparent 1px) 0 0 / 100% 56px,
-    linear-gradient(90deg, rgba(51, 64, 79, 0.30) 1px, transparent 1px) 0 0 / 56px 100%;
-  opacity: 0.55;
-  mask-image: radial-gradient(105% 70% at 50% 42%, #000 8%, transparent 82%);
-}
-
-/* ── shell ───────────────────────────────────────────────── */
-.shell {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(0, var(--rail)) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    "brand  head"
-    "rail   main"
-    "rail   dock";
-  height: 100%;
-  padding-top: var(--safe-t);
-}
-
-/* ── brand ───────────────────────────────────────────────── */
-.brand {
-  grid-area: brand;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 0 18px;
-  height: 58px;
-  border-right: 1px solid var(--edge);
-  border-bottom: 1px solid var(--edge);
-  background: var(--gunmetal);
-}
-.brand__mark { width: 26px; height: 26px; flex: none; color: var(--signal); }
-.brand__name {
-  font-family: var(--mono);
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-}
-.brand__ver {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--steel-dim);
-  letter-spacing: 0.1em;
-  margin-left: auto;
-}
-
-/* ── header ──────────────────────────────────────────────── */
-.head {
-  grid-area: head;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  height: 58px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--edge);
-  background: linear-gradient(180deg, var(--gunmetal), var(--night));
-}
-.head__title {
-  /* Must be allowed to shrink, or it pushes the whole header past the
-     viewport on a phone instead of ellipsising. */
-  min-width: 0;
-  flex: 0 1 auto;
-  font-size: 13px;
-  color: var(--steel);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.head__spacer { flex: 1; }
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--edge-bright);
-  border-radius: 100px;
-  background: var(--gunmetal-2);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--steel);
-  white-space: nowrap;
-}
-.dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--steel-dim);
-  flex: none;
-}
-.dot--live { background: var(--signal); box-shadow: 0 0 0 3px var(--signal-glow); }
-.dot--down { background: var(--danger); }
-
-.iconbtn {
-  display: grid;
-  place-items: center;
-  width: 32px; height: 32px;
-  border: 1px solid var(--edge-bright);
-  border-radius: var(--r);
-  background: var(--gunmetal-2);
-  color: var(--steel);
-  cursor: pointer;
-  flex: none;
-}
-.iconbtn:hover { color: var(--ice); border-color: var(--steel-dim); }
-.iconbtn svg { width: 16px; height: 16px; }
-
-/* ── rail ────────────────────────────────────────────────── */
-.rail {
-  grid-area: rail;
-  border-right: 1px solid var(--edge);
-  background: var(--gunmetal);
-  padding: 18px 0 calc(18px + var(--safe-b));
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-.rail__group { padding: 0 18px; }
-.rail__label {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--steel-dim);
-  margin-bottom: 9px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.rail__label::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--edge);
-}
-.stat {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  padding: 5px 0;
-  font-size: 12.5px;
-}
-.stat__k { color: var(--steel-dim); }
-.stat__v {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--ice);
-  text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 130px;
-}
-.stat__v--amber { color: var(--signal-soft); }
-.stat__v--off { color: var(--steel-dim); }
-
-.rail__actions {
-  display: flex;
-  gap: 7px;
-  margin-top: 11px;
-}
-.rail__actions .btn {
-  flex: 1;
-  padding: 7px 6px;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-}
-
-.rootline {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--steel);
-  padding: 4px 0 4px 12px;
-  position: relative;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.rootline::before {
-  content: "";
-  position: absolute;
-  left: 0; top: 12px;
-  width: 5px; height: 1px;
-  background: var(--signal-dim);
-}
-
-/* ── main ────────────────────────────────────────────────── */
-.main {
-  grid-area: main;
-  min-width: 0;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.log {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 26px 24px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--edge-bright) transparent;
-}
-/* Children of a scrolling flex column shrink by default once the content
-   overflows. A single-line trace with `overflow: hidden` obligingly collapses
-   to zero height and vanishes — present in the DOM, invisible on screen. */
-.log > * { flex: 0 0 auto; }
-.log::-webkit-scrollbar { width: 9px; }
-.log::-webkit-scrollbar-thumb {
-  background: var(--edge-bright);
-  border: 3px solid var(--night);
-  border-radius: 100px;
-}
-
-.turn { max-width: 760px; width: 100%; min-width: 0; }
-.turn__who {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--steel-dim);
-  margin-bottom: 6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.turn--alfred .turn__who { color: var(--signal-dim); }
-.turn__body {
-  font-size: 15px;
-  color: var(--ice);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.turn--user { margin-left: auto; }
-.turn--user .turn__body {
-  background: var(--gunmetal-2);
-  border: 1px solid var(--edge);
-  border-left: 2px solid var(--steel-dim);
-  border-radius: var(--r);
-  padding: 11px 14px;
-  color: var(--ice);
-}
-.turn--user .turn__who { justify-content: flex-end; }
-.turn--alfred .turn__body {
-  border-left: 2px solid var(--signal-dim);
-  padding-left: 14px;
-}
-.turn--system .turn__body {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--steel-dim);
-}
-
-/* A one-line trace of what Alfred just did. Steel, not amber: this is
-   chrome reporting itself, not something that wants attention. */
-.trace {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--steel-dim);
-  padding-left: 14px;
-  position: relative;
-  max-width: 760px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.trace::before {
-  content: "";
-  position: absolute;
-  left: 0; top: 9px;
-  width: 6px; height: 1px;
-  background: var(--edge-bright);
-}
-.trace--queued { color: var(--signal-dim); }
-.trace--queued::before { background: var(--signal-dim); }
-
-/* Approval card. Amber because it needs Jansen — the same meaning the
-   listening ring carries, so attention never has two colours. */
-.confirm {
-  border: 1px solid var(--signal-dim);
-  border-left: 3px solid var(--signal);
-  border-radius: var(--r);
-  background: linear-gradient(180deg, rgba(240,168,48,0.07), transparent 60%), var(--gunmetal-2);
-  padding: 14px 16px;
-  max-width: 760px;
-}
-.confirm--danger { border-color: var(--danger-dim); border-left-color: var(--danger); }
-.confirm__head {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--signal);
-  margin-bottom: 8px;
-}
-.confirm--danger .confirm__head { color: var(--danger); }
-.confirm__summary { font-size: 14.5px; margin-bottom: 8px; }
-.confirm__detail {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--steel);
-  background: var(--void);
-  border: 1px solid var(--edge);
-  border-radius: var(--r);
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  max-height: 220px;
-  overflow: auto;
-  white-space: pre-wrap;
-}
-.confirm__row { display: flex; gap: 9px; }
-
-.btn {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  padding: 8px 15px;
-  border-radius: var(--r);
-  border: 1px solid var(--edge-bright);
-  background: var(--gunmetal);
-  color: var(--steel);
-  cursor: pointer;
-}
-.btn:hover { color: var(--ice); border-color: var(--steel-dim); }
-.btn--go {
-  border-color: var(--signal-dim);
-  color: var(--signal);
-  background: rgba(240, 168, 48, 0.08);
-}
-.btn--go:hover { background: rgba(240, 168, 48, 0.16); color: var(--signal-soft); }
-.btn--danger { border-color: var(--danger-dim); color: var(--danger); }
-
-/* ── dock ────────────────────────────────────────────────── */
-.dock {
-  grid-area: dock;
-  min-width: 0;
-  border-top: 1px solid var(--edge);
-  background: linear-gradient(180deg, var(--night), var(--gunmetal));
-  padding: 14px 24px calc(14px + var(--safe-b));
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.field {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 0 8px 0 15px;
-  background: var(--void);
-  border: 1px solid var(--edge-bright);
-  border-radius: var(--r);
-}
-.field:focus-within { border-color: var(--signal-dim); }
-.field textarea {
-  flex: 1;
-  border: 0;
-  outline: 0;
-  resize: none;
-  background: transparent;
-  color: var(--ice);
-  font-family: var(--ui);
-  font-size: 15px;
-  line-height: 1.5;
-  padding: 12px 0;
-  max-height: 132px;
-  /* 16px would be needed to stop iOS zoom, but the dock is not an input-first
-     surface here and 15px keeps the type scale. iOS respects the viewport
-     meta's user-scalable default, so no zoom occurs on focus. */
-}
-.field textarea::placeholder { color: var(--steel-dim); }
-.send {
-  display: grid;
-  place-items: center;
-  width: 34px; height: 34px;
-  border: 0;
-  border-radius: var(--r);
-  background: transparent;
-  color: var(--steel-dim);
-  cursor: pointer;
-}
-.send:enabled { color: var(--signal); }
-.send:disabled { cursor: default; }
-.send svg { width: 17px; height: 17px; }
-
-/* ── the reactor ─────────────────────────────────────────── */
-/* Concentric rings from the JARVIS vocabulary, in gunmetal and steel.
-   Idle they barely move. Amber only when live. This is the push-to-talk
-   control, not an ornament beside one. */
-.orb {
-  position: relative;
-  width: 64px; height: 64px;
-  flex: none;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-  color: var(--steel-dim);
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-.orb svg { width: 100%; height: 100%; overflow: visible; }
-.orb__ring { fill: none; stroke: currentColor; }
-.orb__spin  { transform-origin: 50% 50%; animation: spin 24s linear infinite; }
-.orb__spin2 { transform-origin: 50% 50%; animation: spin 15s linear infinite reverse; }
-.orb__core { fill: currentColor; opacity: 0.14; transform-origin: 50% 50%; }
-.orb__glyph { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-
-.orb:hover { color: var(--steel); }
-
-/* Live: the signal is lit. */
-.orb[data-mode="listening"] { color: var(--signal); }
-.orb[data-mode="listening"] .orb__spin  { animation-duration: 7s; }
-.orb[data-mode="listening"] .orb__spin2 { animation-duration: 4.5s; }
-.orb[data-mode="listening"] .orb__core {
-  opacity: 0.3;
-  /* Scaled from live mic amplitude in app.js, not a canned animation, so
-     the ring answers the room rather than performing at it. */
-  transform: scale(var(--amp, 1));
-}
-.orb[data-mode="thinking"] { color: var(--signal-soft); }
-.orb[data-mode="thinking"] .orb__spin { animation-duration: 2.4s; }
-.orb[data-mode="speaking"] { color: var(--signal); }
-.orb[data-mode="speaking"] .orb__core { opacity: 0.26; transform: scale(var(--amp, 1)); }
-.orb[data-mode="denied"] { color: var(--danger); }
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.orb__halo {
-  position: absolute;
-  inset: -8px;
-  border-radius: 50%;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 220ms ease;
-  background: radial-gradient(circle, var(--signal-glow), transparent 68%);
-}
-.orb[data-mode="listening"] .orb__halo,
-.orb[data-mode="speaking"] .orb__halo { opacity: 1; }
-
-/* ── overlays ────────────────────────────────────────────── */
-.veil {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: none;
-  place-items: center;
-  padding: 24px;
-  background: rgba(7, 9, 12, 0.93);
-  backdrop-filter: blur(3px);
-}
-.veil[data-open="true"] { display: grid; }
-
-.panel {
-  width: min(460px, 100%);
-  background: var(--gunmetal);
-  border: 1px solid var(--edge-bright);
-  border-radius: var(--r);
-  padding: 26px;
-  text-align: center;
-  max-height: 100%;
-  overflow-y: auto;
-}
-.panel h2 {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--signal);
-  margin: 0 0 6px;
-}
-.panel p { color: var(--steel); font-size: 13.5px; margin: 0 0 18px; }
-.panel__qr {
-  width: 216px; height: 216px;
-  margin: 0 auto 18px;
-  padding: 11px;
-  background: var(--ice);
-  border-radius: var(--r);
-}
-.panel__qr svg { width: 100%; height: 100%; display: block; }
-.panel__code {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--steel);
-  background: var(--void);
-  border: 1px solid var(--edge);
-  border-radius: var(--r);
-  padding: 10px;
-  word-break: break-all;
-  margin-bottom: 16px;
-  text-align: left;
-}
-.panel input[type="text"] {
-  width: 100%;
-  background: var(--void);
-  border: 1px solid var(--edge-bright);
-  border-radius: var(--r);
-  color: var(--ice);
-  font-family: var(--mono);
-  font-size: 13px;
-  padding: 12px;
-  margin-bottom: 12px;
-  outline: 0;
-}
-.panel input[type="text"]:focus { border-color: var(--signal-dim); }
-
-.note {
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--steel-dim);
-  text-align: left;
-  border-left: 2px solid var(--edge-bright);
-  padding-left: 11px;
-  margin-top: 16px;
-}
-.note--warn { border-left-color: var(--signal-dim); color: var(--steel); }
-
-/* ── empty state ─────────────────────────────────────────── */
-.empty {
-  margin: auto;
-  text-align: center;
-  max-width: 420px;
-  padding: 30px 20px;
-}
-.empty__mark { width: 62px; height: 62px; color: var(--edge-bright); margin-bottom: 20px; }
-.empty__line {
-  font-size: 15px;
-  color: var(--steel);
-  font-style: italic;
-}
-.empty__hint {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: var(--steel-dim);
-  margin-top: 16px;
-}
-
-/* ── responsive ──────────────────────────────────────────── */
-@media (max-width: 860px) {
-  .shell {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "head" "main" "dock";
-  }
-  .brand { display: none; }
-  .rail {
-    display: none;
-    position: fixed;
-    inset: calc(52px + var(--safe-t)) 0 0 0;
-    z-index: 15;
-    border-right: 0;
-    border-top: 1px solid var(--edge);
-  }
-  .rail[data-open="true"] { display: flex; }
-  .head { height: 52px; padding: 0 14px; gap: 10px; }
-  .log { padding: 18px 16px 8px; }
-  .dock { padding: 11px 14px calc(11px + var(--safe-b)); gap: 11px; }
-  .orb { width: 56px; height: 56px; }
-  .head__title { font-size: 12px; }
-  /* The dot already carries the state; the words are the first thing to go. */
-  #connText { display: none; }
-  .pill { padding: 0 8px; }
-}
-@media (min-width: 861px) {
-  .rail__toggle { display: none; }
-}
-
-/* Motion is decoration here; content never depends on it. */
-@media (prefers-reduced-motion: reduce) {
-  .orb__spin, .orb__spin2 { animation: none; }
-  .orb__core { transform: none !important; }
-  * { transition-duration: 0.01ms !important; }
-}
-</style>
+<link rel="stylesheet" href="/assets/hud.css">
 </head>
 <body>
 
@@ -689,7 +30,7 @@ body::before {
         <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/>
       </svg>
     </button>
-    <span class="head__title" id="headTitle">Standing by</span>
+    <div class="head__identity"><div class="head__eyebrow">Alfred / Command center</div><span class="head__title" id="headTitle">Standing by</span></div>
     <span class="head__spacer"></span>
     <span class="pill" id="connPill"><span class="dot" id="connDot"></span><span id="connText">Linking</span></span>
     <button class="iconbtn" id="pairBtn" aria-label="Pair a device">
@@ -700,23 +41,27 @@ body::before {
     </button>
   </header>
 
-  <aside class="rail" id="rail">
+  <aside class="rail" id="rail" aria-label="System status">
+    <div class="date-panel" aria-label="Local date and time">
+      <div class="date-dial"><div class="date-dial__inner">
+        <span class="date-dial__month" id="hudMonth">LOCAL</span>
+        <span class="date-dial__day" id="hudDay">--</span>
+      </div></div>
+      <div><span class="date-panel__weekday" id="hudWeekday">Today</span>
+        <time class="date-panel__clock" id="hudClock">--:--</time>
+        <span class="date-panel__label">Device local time</span>
+      </div>
+    </div>
     <div class="rail__group">
-      <div class="rail__label">Faculties</div>
+      <div class="rail__label">System status</div>
       <div class="stat"><span class="stat__k">Reasoning</span><span class="stat__v stat__v--off" id="sProvider">—</span></div>
       <div class="stat"><span class="stat__k">Hearing</span><span class="stat__v stat__v--off" id="sStt">—</span></div>
       <div class="stat"><span class="stat__k">Voice</span><span class="stat__v stat__v--off" id="sTts">—</span></div>
-      <div class="stat"><span class="stat__k">Diary</span><span class="stat__v stat__v--off" id="sGoogle">—</span></div>
-      <div class="stat"><span class="stat__k">Post</span><span class="stat__v stat__v--off" id="sMail">—</span></div>
+      <div class="stat"><span class="stat__k">Calendar</span><span class="stat__v stat__v--off" id="sGoogle">—</span></div>
+      <div class="stat"><span class="stat__k">Mail</span><span class="stat__v stat__v--off" id="sMail">—</span></div>
     </div>
     <div class="rail__group">
-      <div class="rail__label">Household</div>
-      <div class="stat"><span class="stat__k">Serving</span><span class="stat__v" id="sUser">—</span></div>
-      <div class="stat"><span class="stat__k">Time zone</span><span class="stat__v" id="sTz">—</span></div>
-      <div class="stat"><span class="stat__k">Transport</span><span class="stat__v stat__v--off" id="sNet">Local</span></div>
-    </div>
-    <div class="rail__group">
-      <div class="rail__label">Morning</div>
+      <div class="rail__label">Daily briefing</div>
       <div class="stat"><span class="stat__k">Briefing</span><span class="stat__v stat__v--off" id="sBriefing">—</span></div>
       <div class="stat"><span class="stat__k">Notifications</span><span class="stat__v stat__v--off" id="sPush">—</span></div>
       <div class="rail__actions">
@@ -727,26 +72,69 @@ body::before {
     </div>
 
     <div class="rail__group">
-      <div class="rail__label">Reading room</div>
+      <div class="rail__label">File access</div>
       <div id="sRoots"></div>
     </div>
   </aside>
 
   <main class="main">
-    <div class="log" id="log" aria-live="polite">
+    <section class="core" aria-label="Alfred voice control">
+      <div class="core__top" aria-hidden="true"><span>Voice interface / 01</span><span>Dark Knight</span></div>
+      <h1 class="core__heading">Alfred</h1>
+      <p class="core__subtitle">At your service</p>
+      <button class="orb" id="orb" data-mode="idle" aria-label="Hold to speak" aria-describedby="voiceHint">
+        <span class="orb__halo"></span>
+        <svg viewBox="0 0 480 480" aria-hidden="true">
+          <defs><radialGradient id="coreShade"><stop stop-color="#c5ac70" stop-opacity=".1"/><stop offset="1" stop-color="#10171c" stop-opacity=".6"/></radialGradient></defs>
+          <g class="orb__ring orb__steel" opacity=".3">
+            <path d="M0 240h52m376 0h52M240 0v26m0 428v26M42 106h39l22 22m335-22h-39l-22 22M42 374h39l22-22m335 22h-39l-22-22"/>
+            <circle cx="240" cy="240" r="216" stroke-width=".6"/>
+            <circle cx="240" cy="240" r="205" stroke-width="1" stroke-dasharray="1 7"/>
+          </g>
+          <g class="orb__ring orb__spin">
+            <circle cx="240" cy="240" r="194" stroke-width="3" stroke-dasharray="230 30 60 12 90 38" opacity=".45"/>
+            <circle cx="240" cy="240" r="181" stroke-width="13" stroke-dasharray="2 19" opacity=".65"/>
+          </g>
+          <circle class="orb__ring orb__steel" cx="240" cy="240" r="164" stroke-width="1" opacity=".5"/>
+          <g class="orb__ring orb__spin2">
+            <circle cx="240" cy="240" r="152" stroke-width="9" stroke-dasharray="195 22 75 25" opacity=".75"/>
+            <circle cx="240" cy="240" r="138" stroke-width="2" stroke-dasharray="68 12 7 12" opacity=".5"/>
+          </g>
+          <circle cx="240" cy="240" r="124" fill="url(#coreShade)"/>
+          <circle class="orb__ring" cx="240" cy="240" r="124" stroke-width="1" opacity=".5"/>
+          <circle class="orb__ring orb__steel" cx="240" cy="240" r="116" stroke-width="1" opacity=".28"/>
+          <circle class="orb__core" cx="240" cy="240" r="106"/>
+          <path class="orb__bat" d="M142 214L177 220L203 222L223 220L230 202L240 215L250 202L257 220L277 222L303 220L338 214L320 235L307 238L292 254L278 249L263 261L252 259L240 280L228 259L217 261L202 249L188 254L173 238L160 235Z"/>
+          <g fill="currentColor"><circle cx="24" cy="240" r="3"/><circle cx="456" cy="240" r="3"/></g>
+        </svg>
+      </button>
+      <div class="core__state" id="hudMode" role="status">Voice standby</div>
+      <p class="core__hint" id="voiceHint">Hold the core to speak · Release to send</p>
+      <div class="core__session">
+        <div class="stat"><span class="stat__k">Serving</span><span class="stat__v" id="sUser">—</span></div>
+        <div class="stat"><span class="stat__k">Time zone</span><span class="stat__v" id="sTz">—</span></div>
+        <div class="stat"><span class="stat__k">Transport</span><span class="stat__v stat__v--off" id="sNet">Local</span></div>
+      </div>
+    </section>
+    <section class="console" aria-labelledby="consoleTitle">
+      <div class="console__head"><h2 class="console__title" id="consoleTitle">Conversation</h2><span class="console__index" aria-hidden="true">02 / LOG</span></div>
+    <div class="log" id="log" role="log" aria-label="Conversation messages" aria-live="polite" tabindex="0">
       <div class="empty" id="empty">
         <svg class="empty__mark" viewBox="0 0 24 24" aria-hidden="true">
           <path fill="currentColor" d="M12.0 8.78L12.99 6.89L13.85 9.35L15.55 9.42L18.15 9.02L20.75 8.78L23.0 9.3L21.46 10.84L20.16 11.43L19.1 12.97L17.72 12.43L16.54 13.61L14.93 13.04L13.47 14.89L12.0 17.11L10.53 14.89L9.07 13.04L7.46 13.61L6.28 12.43L4.9 12.97L3.84 11.43L2.54 10.84L1.0 9.3L3.25 8.78L5.85 9.02L8.45 9.42L10.15 9.35L11.01 6.89Z"/>
         </svg>
         <div class="empty__line" id="emptyLine">Good evening. I trust the day was survivable.</div>
-        <div class="empty__hint">Type below, or hold the ring to speak</div>
+        <div class="empty__hint">Type a message below, or hold the central core to speak.</div>
       </div>
     </div>
+    </section>
   </main>
 
   <div class="dock">
+    <span class="dock__label" aria-hidden="true">Command /</span>
     <div class="field">
-      <textarea id="input" rows="1" placeholder="Ask Alfred…" autocomplete="off"
+      <span class="field__prefix" aria-hidden="true">›</span>
+      <textarea aria-label="Message Alfred" id="input" rows="1" placeholder="Ask Alfred…" autocomplete="off"
                 autocapitalize="sentences" spellcheck="true"></textarea>
       <button class="send" id="send" disabled aria-label="Send">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true">
@@ -755,21 +143,9 @@ body::before {
       </button>
     </div>
 
-    <button class="orb" id="orb" data-mode="idle" aria-label="Hold to speak">
-      <span class="orb__halo"></span>
-      <svg viewBox="0 0 64 64" aria-hidden="true">
-        <circle class="orb__ring" cx="32" cy="32" r="30" stroke-width="1" opacity=".35"/>
-        <circle class="orb__ring orb__spin" cx="32" cy="32" r="26" stroke-width="1.4"
-                stroke-dasharray="30 12 6 12" opacity=".8"/>
-        <circle class="orb__ring orb__spin2" cx="32" cy="32" r="21" stroke-width="1"
-                stroke-dasharray="3 7" opacity=".55"/>
-        <circle class="orb__core" cx="32" cy="32" r="15"/>
-        <circle class="orb__ring" cx="32" cy="32" r="15" stroke-width="1" opacity=".5"/>
-        <path class="orb__glyph" d="M32 25v9M28.5 28.5v2M35.5 28.5v2M26 33a6 6 0 0 0 12 0"/>
-      </svg>
-    </button>
   </div>
 
+  <footer class="shell__footer"><span>Alfred personal assistant<br>Dark Knight interface</span></footer>
 </div>
 
 <!-- pairing -->
@@ -805,5 +181,6 @@ body::before {
 </div>
 
 <script src="/assets/app.js"></script>
+<script src="/assets/hud.js"></script>
 </body>
 </html>

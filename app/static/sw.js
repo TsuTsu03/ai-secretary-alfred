@@ -10,8 +10,8 @@
  */
 "use strict";
 
-const SHELL_CACHE = "alfred-shell-v1";
-const SHELL = ["/", "/assets/app.js", "/manifest.webmanifest"];
+const SHELL_CACHE = "alfred-shell-v2";
+const SHELL = ["/", "/assets/app.js", "/assets/hud.css", "/assets/hud.js", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   /* Cache each asset separately rather than with addAll.
