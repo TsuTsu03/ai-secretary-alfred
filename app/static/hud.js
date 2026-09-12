@@ -26,6 +26,56 @@
   new MutationObserver(updateMode).observe(orb, { attributes: true, attributeFilter: ["data-mode"] });
   updateMode();
 
+  // HUD readouts mirror the live client; they do not invent system telemetry.
+  const connection = byId("connPill");
+  function updateConnection() {
+    const dot = byId("connDot");
+    byId("hudLink").textContent = dot.classList.contains("dot--live") ? "ON"
+      : dot.classList.contains("dot--down") ? "OFF" : "—";
+    byId("hudConnection").textContent = byId("connText").textContent;
+  }
+  new MutationObserver(updateConnection).observe(connection, {
+    attributes: true, childList: true, subtree: true, characterData: true,
+  });
+  updateConnection();
+
+  const log = byId("log");
+  const updateTurns = () => {
+    byId("hudTurns").textContent = String(log.querySelectorAll(".turn").length).padStart(2, "0");
+  };
+  new MutationObserver(updateTurns).observe(log, { childList: true });
+  updateTurns();
+
+  // Reuse the client's textarea sizing after a breakpoint or orientation change.
+  window.addEventListener("resize", () => {
+    byId("input").dispatchEvent(new Event("input"));
+  });
+
+  function setRailOpen(open) {
+    byId("rail").dataset.open = String(open);
+    byId("railToggle").setAttribute("aria-expanded", String(open));
+  }
+  document.querySelectorAll("[data-hud-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = byId(button.dataset.hudTarget);
+      const inRail = byId("rail").contains(target);
+      setRailOpen(inRail && window.matchMedia("(max-width: 900px)").matches);
+      if (target.id === "pairBtn") {
+        target.click();
+        return;
+      }
+      if (!target.matches("button, input, textarea, [tabindex]")) target.tabIndex = -1;
+      target.scrollIntoView({ block: "nearest" });
+      target.focus({ preventScroll: true });
+    });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && byId("rail").dataset.open === "true") {
+      setRailOpen(false);
+      byId("railToggle").focus();
+    }
+  });
+
   // Give keyboard users the same press / release control as pointer users.
   // Existing pointer handlers retain ownership of recording and playback.
   let keyboardHold = false;

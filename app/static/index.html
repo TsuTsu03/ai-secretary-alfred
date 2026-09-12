@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/assets/hud.css">
 </head>
 <body>
+<div class="scene" aria-hidden="true"></div>
 
 <div class="shell">
 
@@ -52,7 +53,7 @@
         <span class="date-panel__label">Device local time</span>
       </div>
     </div>
-    <div class="rail__group">
+    <div class="rail__group" id="systemsPanel" tabindex="-1">
       <div class="rail__label">System status</div>
       <div class="stat"><span class="stat__k">Reasoning</span><span class="stat__v stat__v--off" id="sProvider">—</span></div>
       <div class="stat"><span class="stat__k">Hearing</span><span class="stat__v stat__v--off" id="sStt">—</span></div>
@@ -71,7 +72,7 @@
       <div class="note" id="pushNote" hidden></div>
     </div>
 
-    <div class="rail__group">
+    <div class="rail__group" id="filesPanel" tabindex="-1">
       <div class="rail__label">File access</div>
       <div id="sRoots"></div>
     </div>
@@ -80,8 +81,23 @@
   <main class="main">
     <section class="core" aria-label="Alfred voice control">
       <div class="core__top" aria-hidden="true"><span>Voice interface / 01</span><span>Dark Knight</span></div>
-      <h1 class="core__heading">Alfred</h1>
-      <p class="core__subtitle">At your service</p>
+      <div class="core__overview">
+        <div class="schematic" aria-hidden="true">
+          <span>Dark Knight / schematic</span>
+          <svg viewBox="0 0 250 80" fill="none" stroke="currentColor">
+            <path opacity=".25" d="M0 20h250M0 40h250M0 60h250M25 0v80M75 0v80M125 0v80M175 0v80M225 0v80"/>
+            <path d="M25 24L70 30L105 32L116 20L125 30L134 20L145 32L180 30L225 24L204 45L185 45L167 61L153 52L139 57L125 72L111 57L97 52L83 61L65 45L46 45Z"/>
+            <path opacity=".5" d="M25 10v8m-4-4h8m188 0h8m-4-4v8M14 24h6m210 0h6M125 2v12M125 75v5"/>
+          </svg>
+        </div>
+        <div class="link-monitor">
+          <div class="link-monitor__dial"><span id="hudLink">—</span><small>LINK</small></div>
+          <div><span class="eyebrow">Assistant connection</span><strong id="hudConnection">Linking</strong><span class="link-monitor__bars" aria-hidden="true"></span></div>
+        </div>
+      </div>
+      <h1 class="core__heading">Alfred <span>/ Personal operating system</span></h1>
+      <div class="reactor">
+        <div class="reactor__coordinates" aria-hidden="true"><span>VOICE / CORE</span><span>INPUT → RESPONSE</span></div>
       <button class="orb" id="orb" data-mode="idle" aria-label="Hold to speak" aria-describedby="voiceHint">
         <span class="orb__halo"></span>
         <svg viewBox="0 0 480 480" aria-hidden="true">
@@ -108,6 +124,17 @@
           <g fill="currentColor"><circle cx="24" cy="240" r="3"/><circle cx="456" cy="240" r="3"/></g>
         </svg>
       </button>
+        <div class="core-links core-links--left" aria-label="Assistant controls">
+          <button type="button" data-hud-target="input"><span>Conversation</span><i></i></button>
+          <button type="button" data-hud-target="orb"><span>Voice input</span><i></i></button>
+          <button type="button" data-hud-target="systemsPanel"><span>Systems</span><i></i></button>
+        </div>
+        <div class="core-links core-links--right" aria-label="Status panels">
+          <button type="button" data-hud-target="filesPanel"><i></i><span>Files</span></button>
+          <button type="button" data-hud-target="sGoogle"><i></i><span>Calendar</span></button>
+          <button type="button" data-hud-target="sMail"><i></i><span>Mail</span></button>
+        </div>
+      </div>
       <div class="core__state" id="hudMode" role="status">Voice standby</div>
       <p class="core__hint" id="voiceHint">Hold the core to speak · Release to send</p>
       <div class="core__session">
@@ -127,11 +154,18 @@
         <div class="empty__hint">Type a message below, or hold the central core to speak.</div>
       </div>
     </div>
+      <div class="console__footer"><span>Conversation entries</span><strong id="hudTurns">00</strong><span class="console__ticks" aria-hidden="true"></span></div>
     </section>
   </main>
 
   <div class="dock">
-    <span class="dock__label" aria-hidden="true">Command /</span>
+    <nav class="launchers" aria-label="Quick controls">
+      <button type="button" data-hud-target="input"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor"><path d="M4 6h24v17H13l-7 5v-5H4zM9 11h14M9 16h10"/></svg><span>Chat</span></button>
+      <button type="button" data-hud-target="orb"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor"><rect x="12" y="3" width="8" height="17" rx="4"/><path d="M7 14v3a9 9 0 0 0 18 0v-3M16 26v4M10 30h12"/></svg><span>Voice</span></button>
+      <button type="button" data-hud-target="briefBtn"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor"><path d="M7 3h15l4 4v23H7zM21 3v6h5M11 14h11M11 19h11M11 24h7"/></svg><span>Briefing</span></button>
+      <button type="button" data-hud-target="filesPanel"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor"><path d="M3 7h11l3 4h12v17H3zM3 14h26M8 19h10M8 23h6"/></svg><span>Files</span></button>
+      <button type="button" data-hud-target="pairBtn"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor"><rect x="3" y="4" width="19" height="15"/><path d="M12 19v5M7 24h10"/><rect x="21" y="13" width="8" height="16" rx="1"/><path d="M24 26h2"/></svg><span>Devices</span></button>
+    </nav>
     <div class="field">
       <span class="field__prefix" aria-hidden="true">›</span>
       <textarea aria-label="Message Alfred" id="input" rows="1" placeholder="Ask Alfred…" autocomplete="off"
@@ -145,7 +179,7 @@
 
   </div>
 
-  <footer class="shell__footer"><span>Alfred personal assistant<br>Dark Knight interface</span></footer>
+  <footer class="shell__footer"><span>Dark Knight<br>Personal command interface</span><span class="footer__scan" aria-hidden="true"></span></footer>
 </div>
 
 <!-- pairing -->

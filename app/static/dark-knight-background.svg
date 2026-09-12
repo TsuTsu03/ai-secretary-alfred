@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" fill="none">
+  <defs>
+    <radialGradient id="mist"><stop stop-color="#53616b" stop-opacity=".6"/><stop offset="1" stop-color="#080b0e" stop-opacity="0"/></radialGradient>
+    <linearGradient id="armor" x1="940" y1="300" x2="1400" y2="900" gradientUnits="userSpaceOnUse"><stop stop-color="#65717a"/><stop offset=".25" stop-color="#222c34"/><stop offset=".65" stop-color="#080d12"/><stop offset="1" stop-color="#010305"/></linearGradient>
+    <linearGradient id="cowl" x1="1020" y1="220" x2="1270" y2="410" gradientUnits="userSpaceOnUse"><stop stop-color="#0d131a"/><stop offset=".4" stop-color="#38454f"/><stop offset=".65" stop-color="#111920"/><stop offset="1" stop-color="#020608"/></linearGradient>
+    <linearGradient id="jaw" x1="1100" y1="440" x2="1210" y2="510" gradientUnits="userSpaceOnUse"><stop stop-color="#54585b"/><stop offset=".4" stop-color="#8a8a82"/><stop offset="1" stop-color="#1c2329"/></linearGradient>
+    <linearGradient id="fade" x2="0" y2="1"><stop stop-color="#000" stop-opacity=".1"/><stop offset="1" stop-color="#000" stop-opacity=".9"/></linearGradient>
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".55" numOctaves="3" seed="12" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope=".065"/></feComponentTransfer><feBlend in="SourceGraphic" mode="soft-light"/></filter>
+  </defs>
+  <path fill="#080b0f" d="M0 0h1600v1000H0z"/>
+  <ellipse cx="1000" cy="450" rx="600" ry="510" fill="url(#mist)"/>
+  <g stroke="#74848b" opacity=".08"><path d="M0 180h1600M0 780h1600M80 0v1000M1430 0v1000"/><path stroke-width="14" d="M0 175h800M1170 175h430M0 805h920"/></g>
+  <g filter="url(#grain)">
+    <!-- Cape and shoulder silhouette. -->
+    <path d="M1045 492L914 552L822 750L725 1000H1580L1483 706L1346 570L1241 496Z" fill="#04080c"/>
+    <path d="M1047 505L920 557L889 632L842 814L832 1000H1512L1430 682L1337 576L1241 506Z" fill="url(#armor)"/>
+    <path d="M941 550L899 709L838 1000M1310 546L1387 737L1434 1000M964 545L933 670" stroke="#667078" stroke-opacity=".27" stroke-width="3"/>
+    <!-- Segmented chest plates. -->
+    <path d="M947 616L1073 576L1122 668L1110 754L965 721L921 673Z" fill="#25303a" stroke="#687780" stroke-opacity=".2"/>
+    <path d="M1154 667L1213 578L1329 623L1373 692L1320 740L1161 758Z" fill="#131d25" stroke="#687780" stroke-opacity=".24"/>
+    <path d="M963 747L1104 774L1108 830L996 814ZM1161 778L1317 764L1275 831L1159 838Z" fill="#141d25" stroke="#53636c" stroke-opacity=".24"/>
+    <path d="M1005 839L1107 851L1111 903L1030 895ZM1157 857L1271 851L1246 907L1155 915Z" fill="#111a22" stroke="#53636c" stroke-opacity=".2"/>
+    <path d="M956 637L1059 656L1102 644L1127 665L1153 644L1195 655L1304 632L1264 681L1224 675L1196 710L1167 700L1128 737L1089 700L1060 710L1032 675L992 681Z" fill="#070d12"/>
+    <!-- Neck and cowl, faceted to stay readable beneath HUD layers. -->
+    <path d="M1065 432L1038 546L1094 615L1177 638L1239 556L1225 427Z" fill="url(#armor)" stroke="#75818a" stroke-opacity=".18"/>
+    <path d="M1028 176L1044 89L1085 205Q1150 165 1210 206L1257 92L1252 274L1274 331L1251 433L1216 494L1120 524L1072 474L1041 413L1036 315Z" fill="url(#cowl)"/>
+    <path d="M1044 92L1060 251L1051 332L1082 395M1256 96L1233 258L1252 335L1215 419" stroke="#8b979e" stroke-opacity=".34" stroke-width="2"/>
+    <path d="M1060 279L1115 256L1160 277L1149 339L1080 354L1051 332Z" fill="#38454f" opacity=".6"/>
+    <path d="M1160 277L1219 258L1238 303L1252 335L1192 347L1149 339Z" fill="#0b141c"/>
+    <path d="M1070 339L1131 352L1111 374L1084 368Z" fill="#03080d"/>
+    <path d="M1177 353L1232 333L1217 368L1191 375Z" fill="#02070a"/>
+    <path d="M1083 354L1108 361M1196 360L1216 351" stroke="#89979f" stroke-opacity=".7" stroke-width="3"/>
+    <path d="M1149 337L1131 410L1160 425L1178 407Z" fill="#42505a"/>
+    <path d="M1149 337L1160 425L1178 407Z" fill="#101921"/>
+    <path d="M1082 396L1100 443L1126 430L1159 443L1194 427L1232 396L1211 493L1162 532L1113 502Z" fill="#091017"/>
+    <path d="M1100 443L1126 449L1159 463L1194 447L1214 439L1198 492L1160 516L1128 497Z" fill="url(#jaw)"/>
+    <path d="M1129 479L1155 483L1182 476M1140 495L1164 498" stroke="#232b31" stroke-width="4"/>
+    <path d="M1083 398L1098 419L1106 439M1234 388L1217 424M1114 512L1158 550L1202 518" stroke="#687781" stroke-opacity=".32" stroke-width="2"/>
+  </g>
+  <path fill="url(#fade)" d="M0 0h1600v1000H0z"/>
+</svg>
