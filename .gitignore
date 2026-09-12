@@ -20,3 +20,6 @@ node_modules/
 secrets/
 token.json
 credentials.json
+
+# Cygwin/MSYS crash dumps from the shell, not ours to keep.
+*.stackdump

@@ -1,12 +1,23 @@
 """Google OAuth for Calendar and Gmail.
 
-Scopes are the narrowest that do the job, and the narrowness is deliberate:
+Scopes are the narrowest that do the job:
 
 * Calendar gets read/write, because moving a meeting is half the point of a
   secretary. Every write still goes through the confirmation gate.
-* Gmail gets ``gmail.modify`` - **not** ``gmail.send``. Alfred can read, label,
-  and compose drafts. He cannot send, and that is enforced by the token itself
-  rather than by remembering not to call the wrong method.
+* Gmail gets ``gmail.modify``, which covers reading, labelling, and drafting.
+
+**On sending.** ``gmail.modify`` also permits ``users.messages.send``, and there
+is no Gmail scope that allows drafting while forbidding sending -
+``gmail.compose`` permits send too. So the fact that Alfred never sends mail is
+a property of *this application* (no send tool is registered, and drafting is
+gated behind a confirmation card), not a property of the token. That is a
+weaker guarantee than a scope restriction would be, and it is recorded here
+plainly rather than overstated: an earlier version of this file claimed the
+token made sending impossible, which was simply wrong.
+
+If you want the stronger, token-level guarantee, switch ``gmail.modify`` to
+``gmail.readonly`` below and drop the draft tool. Alfred then cannot draft
+either - that is the trade Google's scope model forces.
 
 The refresh token lives in the data directory, never in the repo. It is the
 most valuable secret Alfred holds: it opens Jansen's mail.
@@ -24,8 +35,9 @@ logger = logging.getLogger(__name__)
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
-    # modify, not send. The absence of the send scope is the actual guarantee
-    # that Alfred cannot email anyone on Jansen's behalf.
+    # Covers read, label, and draft. Note that it also covers send - see the
+    # module docstring. Use gmail.readonly instead if you want sending to be
+    # impossible at the token level, and accept losing drafts.
     "https://www.googleapis.com/auth/gmail.modify",
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
@@ -101,12 +113,16 @@ def service(name: str, version: str, settings: Settings | None = None):
     return build(name, version, credentials=credentials, cache_discovery=False)
 
 
-def connect(settings: Settings | None = None) -> str:
-    """Run the installed-app OAuth flow. Opens a browser; returns the account.
+def connect(settings: Settings | None = None, open_browser: bool = True) -> str:
+    """Run the installed-app OAuth flow. Returns the connected account.
 
     Interactive by design, and therefore not reachable from the HTTP API - a
     route that pops a browser window on the server would be a strange thing for
     the phone to trigger.
+
+    ``open_browser=False`` prints the authorisation URL instead of launching a
+    browser, for when Alfred runs somewhere without one - or when the browser
+    that would open is not the one you are signed into.
     """
     from google_auth_oauthlib.flow import InstalledAppFlow
 
@@ -127,7 +143,15 @@ def connect(settings: Settings | None = None) -> str:
 
     flow = InstalledAppFlow.from_client_secrets_file(str(secrets), SCOPES)
     # port=0 lets the OS pick a free loopback port for the redirect.
-    credentials = flow.run_local_server(port=0, prompt="consent")
+    credentials = flow.run_local_server(
+        port=0,
+        prompt="consent",
+        open_browser=open_browser,
+        authorization_prompt_message=(
+            "Open this URL to authorise Alfred:\n\n{url}\n" if not open_browser else
+            "Opening a browser to authorise Alfred. If it does not appear, open:\n\n{url}\n"
+        ),
+    )
 
     destination = token_path(settings)
     destination.write_text(credentials.to_json(), encoding="utf-8")
@@ -166,9 +190,16 @@ def disconnect(settings: Settings | None = None) -> bool:
 
 def describe(settings: Settings | None = None) -> dict:
     settings = settings or get_settings()
+    scopes_allow_send = any(
+        scope.endswith(("gmail.modify", "gmail.compose", "gmail.send")) for scope in SCOPES
+    )
     return {
         "configured": has_client_secrets(settings),
         "connected": is_connected(settings),
-        "can_send_mail": False,  # the send scope is deliberately not requested
+        # Honest split: what the token permits, versus what Alfred actually
+        # offers. Reporting a single "can_send_mail: False" hid the difference
+        # and overstated the guarantee.
+        "scope_allows_send": scopes_allow_send,
+        "send_tool_registered": False,
         "scopes": SCOPES,
     }

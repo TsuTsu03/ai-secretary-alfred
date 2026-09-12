@@ -68,10 +68,19 @@ It will tell you exactly what to create in the Google Cloud console (a Desktop
 OAuth client, with the Calendar and Gmail APIs enabled) and where to save the
 downloaded JSON. Keep that project on the free tier with no billing account.
 
-**Alfred asks for `gmail.modify`, not `gmail.send`.** He can read your mail and
-save drafts; he cannot send anything. That is enforced by the scopes on the
-token rather than by code remembering not to call the wrong method — so it
-holds even if the code is wrong.
+**Alfred reads your mail and saves drafts. He never sends.**
+
+Worth being precise about how that is enforced, because it is easy to overstate:
+Alfred asks for `gmail.modify`, and `gmail.modify` *does* permit sending. There
+is no Gmail scope that allows drafting while forbidding sending — `gmail.compose`
+permits send too. So what stops Alfred sending mail is that **no send tool
+exists**: nothing calls `users.messages.send`, and the model is offered no way
+to. Drafting is additionally gated behind a confirmation card.
+
+That is an application-level guarantee, not a Google-enforced one. If you want
+the stronger version, change `gmail.modify` to `gmail.readonly` in
+`app/integrations/google_oauth.py` and drop the draft tool — Alfred then cannot
+draft either, which is the trade Google's scope model forces.
 
 Calendar and mail tools are only registered once a token exists. Before that
 Alfred simply does not have them, rather than having them and failing.
@@ -138,7 +147,8 @@ are enforced in code rather than left to good behaviour:
   roots too.
 - **Nothing changes without approval.** Writes, calendar edits, and mail all
   become a `PendingAction` that Alfred describes and you approve. Gmail is
-  draft-only in v1.
+  draft-only — enforced by there being no send tool, not by the scope (see
+  above).
 - **Read content is data, not instruction.** File and email text is fenced in
   an untrusted-content wrapper. A document saying "ignore your instructions"
   gets reported, not obeyed.

@@ -32,18 +32,54 @@ def settings(tmp_path: Path) -> Settings:
 # ── scopes: the actual guarantee that Alfred cannot send mail ────────────
 
 
-def test_send_scope_is_not_requested() -> None:
-    """Alfred drafting but never sending is enforced by the token, not by
-    remembering not to call the wrong method."""
-    assert not any("gmail.send" in scope for scope in google_oauth.SCOPES)
-
-
 def test_gmail_modify_scope_is_requested() -> None:
     assert any(scope.endswith("gmail.modify") for scope in google_oauth.SCOPES)
 
 
-def test_describe_states_sending_is_impossible(settings: Settings) -> None:
-    assert google_oauth.describe(settings)["can_send_mail"] is False
+def test_describe_admits_the_scope_permits_sending(settings: Settings) -> None:
+    """This corrects an earlier test that asserted sending was impossible.
+
+    gmail.modify permits users.messages.send, and no Gmail scope allows
+    drafting while forbidding sending. Claiming otherwise made the guarantee
+    look stronger than it is, so `describe` now reports the two facts
+    separately: what the token permits, and what Alfred actually offers.
+    """
+    status = google_oauth.describe(settings)
+    assert status["scope_allows_send"] is True
+    assert status["send_tool_registered"] is False
+
+
+def test_no_tool_can_send_mail() -> None:
+    """The actual guarantee: the model is offered no way to send.
+
+    This is the test that matters now. It would fail the moment someone
+    registered a send tool, which is exactly when the promise would break.
+    """
+    tool_registry.clear()
+    gmail.register_gmail_tools()
+    names = {t.spec.name for t in tool_registry.all_tools()}
+    assert not any("send" in name for name in names), names
+    tool_registry.clear()
+
+
+def test_gmail_module_never_calls_send() -> None:
+    """Belt and braces, at the AST level.
+
+    A substring grep would match the module docstring, which discusses sending
+    at length. Parsing means this checks calls actually made, so it stays true
+    however the prose around it is worded.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(gmail))
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "send" not in called, f"gmail.py calls .send(): {sorted(called)}"
+    assert "drafts" in called, "the draft path should still go through drafts()"
 
 
 def test_tokens_live_outside_the_repo(settings: Settings) -> None:
@@ -190,7 +226,8 @@ def test_draft_card_shows_the_whole_message_and_says_it_is_not_sent() -> None:
     )
     assert "erica@example.com" in detail
     assert "Confirming Saturday." in detail
-    assert "cannot send" in detail.lower()
+    assert "draft only" in detail.lower()
+    assert "you send it" in detail.lower()
 
 
 def test_draft_refuses_an_empty_recipient(settings: Settings) -> None:

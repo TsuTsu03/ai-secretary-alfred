@@ -11,6 +11,7 @@ the laptop would be a peculiar thing for the phone to be able to trigger.
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -21,6 +22,16 @@ from app.integrations import google_oauth
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Connect Alfred to Google.")
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Print the authorisation URL instead of opening a browser. Use this "
+        "when Alfred runs headless, or when the browser that would open is not "
+        "the one you are signed into.",
+    )
+    args = parser.parse_args()
+
     settings = get_settings()
     settings.ensure_dirs()
 
@@ -48,7 +59,7 @@ def main() -> int:
     print("deliberately, so he can draft replies but never send one.\n")
 
     try:
-        account = google_oauth.connect(settings)
+        account = google_oauth.connect(settings, open_browser=not args.no_browser)
     except google_oauth.GoogleAuthError as exc:
         print(f"Failed: {exc}")
         return 1

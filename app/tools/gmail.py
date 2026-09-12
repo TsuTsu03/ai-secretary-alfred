@@ -1,11 +1,18 @@
-"""Gmail tools: read, summarise, draft. Never send.
+"""Gmail tools: read, summarise, draft. Alfred never sends.
 
-Two layers enforce that, not one:
+How that is enforced, stated accurately:
 
-1. The OAuth token does not carry ``gmail.send``. Even a bug that called the
-   send endpoint would get a 403 from Google.
-2. Drafting is registered as mutating, so it queues a confirmation card showing
-   the full text before anything is written to the mailbox.
+1. **No send tool exists.** Nothing in this module calls
+   ``users.messages.send``, and the registry offers the model no way to.
+2. **Drafting is gated.** ``draft_reply`` is registered as mutating, so it
+   queues a confirmation card showing the full text before anything reaches the
+   mailbox.
+
+What does *not* enforce it: the OAuth scope. ``gmail.modify`` permits sending,
+and no Gmail scope allows drafting while forbidding it. So this is an
+application-level guarantee, not a Google-enforced one. Swapping the scope to
+``gmail.readonly`` would make sending impossible at the token level, at the
+cost of losing drafts entirely.
 
 Everything read here was written by other people. The agent fences tool output
 as untrusted before it reaches the model, which matters more for mail than for
@@ -190,8 +197,9 @@ def draft_reply(
 ) -> str:
     """Save a draft. Only ever reached via an approved PendingAction.
 
-    Creates a draft; it does not send. The token has no send scope, so this
-    cannot become a send by mistake.
+    Creates a draft. It does not send, because it calls ``drafts().create`` and
+    nothing here ever calls ``messages().send`` - not because the scope forbids
+    it, which it does not.
     """
     settings = settings or get_settings()
     if not (to or "").strip():
@@ -218,7 +226,7 @@ def draft_reply(
 
     return (
         f"Draft saved to {to} (id {created.get('id')}). "
-        f"It has NOT been sent - send it yourself from Gmail when you are happy with it."
+        f"It has NOT been sent - open Gmail and send it yourself when you are happy with it."
     )
 
 
@@ -228,7 +236,7 @@ def _describe_draft(arguments: dict) -> str:
         f"Subject: {arguments.get('subject', '(none)')}\n"
         f"{'Thread:  ' + arguments['thread_id'] if arguments.get('thread_id') else ''}\n"
         f"\n{arguments.get('body', '')}\n\n"
-        f"--- Saved as a draft only. Alfred cannot send mail."
+        f"--- Saved as a draft only. Alfred has no way to send it; you send it from Gmail."
     )
 
 
@@ -283,9 +291,10 @@ def register_gmail_tools() -> None:
             spec=ToolSpec(
                 name="draft_reply",
                 description=(
-                    "Propose an email draft. This does NOT send anything - Alfred cannot "
-                    "send mail at all. It queues a confirmation card showing the full text, "
-                    "and on approval saves a draft in Gmail for Jansen to send himself."
+                    "Propose an email draft. This does NOT send anything, and you have no "
+                    "tool that can send mail. It queues a confirmation card showing the "
+                    "full text; on approval it saves a draft in Gmail for Jansen to send "
+                    "himself. Never tell him an email has gone out."
                 ),
                 parameters={
                     "type": "object",

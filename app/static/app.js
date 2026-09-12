@@ -151,7 +151,8 @@ function renderStatus(data) {
     ui.sGoogle.textContent = hasCalendar ? "Connected" : "Unavailable";
     ui.sMail.textContent = hasMail ? "Draft only" : "Unavailable";
     ui.sGoogle.title = google.account || "";
-    ui.sMail.title = "Alfred can read and draft. He cannot send.";
+    ui.sMail.title =
+      "Reads and drafts. No send tool exists — the scope would permit it, Alfred does not.";
   }
   ui.sGoogle.className = "stat__v" + (google.connected && hasCalendar ? " stat__v--amber" : " stat__v--off");
   ui.sMail.className = "stat__v" + (google.connected && hasMail ? " stat__v--amber" : " stat__v--off");
