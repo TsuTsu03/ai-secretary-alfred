@@ -23,7 +23,7 @@ See [Cost](#cost).
 | File search and Q&A | Working |
 | Confirm-before-writing gate | Working |
 | Calendar and Gmail | Working - needs a one-time Google connect |
-| Daily briefing | Phase 5 |
+| Daily briefing over Web Push | Working — needs HTTPS on iPhone |
 
 ## Requirements
 
@@ -85,6 +85,27 @@ draft either, which is the trade Google's scope model forces.
 Calendar and mail tools are only registered once a token exists. Before that
 Alfred simply does not have them, rather than having them and failing.
 
+## The morning briefing
+
+Alfred composes a briefing at 07:00 in your timezone — what is on the calendar,
+what unread mail deserves attention, what changed in your projects — and pushes
+it to every device you have enabled notifications on. Tapping the notification
+opens the full text.
+
+Enable it from the rail: **Notifications → Enable**. "Brief me now" composes one
+immediately, which is how you check the whole path without waiting for morning.
+
+Change the time with `ALFRED_BRIEFING_HOUR` / `ALFRED_BRIEFING_MINUTE`, or turn
+it off with `ALFRED_BRIEFING_ENABLED=false`.
+
+Two things worth knowing:
+
+- **Push is self-hosted.** VAPID keys are generated once into the data
+  directory. No Firebase, no push account, nobody else holding a device token.
+- **On iPhone the briefing only arrives if Alfred is installed to the Home
+  Screen from an https address.** That is a Safari rule, not a bug here — see
+  below.
+
 ## Reaching Alfred from the iPhone
 
 Alfred refuses to bind to a publicly routable interface, so exposing him is a
@@ -97,10 +118,11 @@ deliberate act rather than an accident. Use Tailscale:
 4. Restart Alfred, open the pairing dialog, scan the QR from the iPhone.
 5. On the iPhone: **Share → Add to Home Screen**.
 
-**`tailscale serve` is not optional if you want voice.** Safari refuses
-microphone access on plain HTTP, and iOS only permits Web Push to a PWA
-installed from a real HTTPS origin. Alfred over `http://100.x.x.x` will load,
-look correct, and silently never hear you.
+**`tailscale serve` is not optional for voice or for the briefing.** Safari
+refuses microphone access on plain HTTP, and iOS only delivers Web Push to a
+PWA installed to the Home Screen from a real HTTPS origin. Alfred over
+`http://100.x.x.x` will load, look entirely correct, and then never hear you
+and never wake you.
 
 ## Cost
 
@@ -113,6 +135,7 @@ look correct, and silently never hear you.
 | Remote access | Tailscale personal plan | $0 |
 | HTTPS | `tailscale serve` (Let's Encrypt) | $0 |
 | Calendar, mail | Google API free quota | $0 |
+| Notifications | Self-hosted VAPID Web Push | $0 |
 | Hosting | Your laptop | $0 |
 
 Two things to know so it stays that way:
@@ -183,6 +206,15 @@ app/
 - **Groq's free tier is ~6–8k tokens/minute.** That is far too small for a
   prompt carrying retrieved file context. The router skips it for large
   prompts rather than earning a 429.
+- **`cache.addAll` in a service worker is atomic.** One failed request rejects
+  the install, the worker never activates, and every
+  `navigator.serviceWorker.ready` in every tab then hangs forever waiting for
+  an activation that will not come. `sw.js` caches each asset separately.
+- **Read SQLModel columns inside the session.** `session_scope` commits on
+  exit, which expires every loaded instance, so touching an attribute
+  afterwards raises `DetachedInstanceError` rather than returning the value it
+  obviously already had. This shipped once and surfaced in a real briefing as
+  "unable to inspect your recent file activity due to a database error".
 - **The router must never fall back after emitting a token.** Doing so splices
   two different answers together. `tests/test_router.py` pins this.
 - **Embeddings must be L2-normalised.** sqlite-vec ranks by L2 distance, and

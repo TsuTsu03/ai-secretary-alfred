@@ -59,6 +59,7 @@ class StatusResponse(BaseModel):
     voice_out: dict
     voice_in: dict
     google: dict
+    briefing: dict
     tools: list[str]
     roots: list[RootStatus]
     base_url: str
@@ -103,6 +104,7 @@ def status(settings: Settings = Depends(get_settings)) -> StatusResponse:
         voice_out=_voice_out_status(settings),
         voice_in=_voice_in_status(settings),
         google=_google_status(settings),
+        briefing=_briefing_status(settings),
         tools=_tool_names(),
         roots=roots,
         base_url=settings.base_url,
@@ -113,9 +115,10 @@ def status(settings: Settings = Depends(get_settings)) -> StatusResponse:
 def _google_status(settings: Settings) -> dict:
     """Whether the calendar and mailbox are reachable.
 
-    Reports the connected account but never the token, and states plainly that
-    sending is not possible - that is a property of the granted scopes, not a
-    promise this code makes.
+    Reports the connected account but never the token. Sending is reported as
+    two separate facts - what the scope permits, and whether a send tool
+    exists - because collapsing them into one reassuring boolean is exactly
+    the overstatement that had to be corrected once already.
     """
     try:
         from app.integrations import google_oauth
@@ -127,6 +130,24 @@ def _google_status(settings: Settings) -> dict:
         return status
     except Exception as exc:
         return {"configured": False, "connected": False, "detail": str(exc)}
+
+
+def _briefing_status(settings: Settings) -> dict:
+    """Schedule plus push readiness, in one place.
+
+    Reports `ios_requires_https_pwa` because that is the single most common
+    reason a briefing never arrives on a phone, and it looks like a bug rather
+    than a platform requirement.
+    """
+    try:
+        from app.jobs import scheduler
+        from app.push import webpush
+
+        status = scheduler.describe(settings)
+        status.update(webpush.describe(settings))
+        return status
+    except Exception as exc:
+        return {"running": False, "ready": False, "detail": str(exc)}
 
 
 def _tool_names() -> list[str]:
@@ -716,3 +737,150 @@ async def decide_action(
 
     ok, result = await run_in_threadpool(tool_registry.execute_approved, action_id, settings)
     return DecisionResponse(ok=ok, status="executed" if ok else "failed", result=result)
+
+
+# ---------------------------------------------------------------------------
+# briefing and push
+# ---------------------------------------------------------------------------
+
+
+class PushKeyResponse(BaseModel):
+    public_key: str
+    ios_requires_https_pwa: bool
+
+
+@router.get(
+    "/api/push/key",
+    response_model=PushKeyResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+def push_key(settings: Settings = Depends(get_settings)) -> PushKeyResponse:
+    """The applicationServerKey the browser needs to subscribe."""
+    from app.push import webpush
+
+    return PushKeyResponse(
+        public_key=webpush.public_key(settings), ios_requires_https_pwa=True
+    )
+
+
+class SubscribeRequest(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
+    label: str = ""
+
+
+class SubscribeResponse(BaseModel):
+    ok: bool
+    subscribers: int
+
+
+@router.post(
+    "/api/push/subscribe",
+    response_model=SubscribeResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+def push_subscribe(
+    payload: SubscribeRequest, request: Request, settings: Settings = Depends(get_settings)
+) -> SubscribeResponse:
+    """Record a browser's push subscription against its device row."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import select
+
+    from app.db import session_scope
+    from app.models import Device
+    from app.push import webpush
+
+    if not payload.endpoint.startswith("https://"):
+        raise HTTPException(status_code=400, detail="That is not a push endpoint.")
+
+    user_agent = (request.headers.get("user-agent") or "")[:400]
+
+    with session_scope() as session:
+        # Key on the endpoint first: the same browser resubscribing should
+        # update its row rather than accumulate duplicates that each get a
+        # copy of every briefing.
+        device = session.exec(
+            select(Device).where(Device.push_endpoint == payload.endpoint)
+        ).first()
+        if device is None:
+            device = session.exec(select(Device).where(Device.user_agent == user_agent)).first()
+        if device is None:
+            device = Device(label=payload.label or "Device", user_agent=user_agent)
+
+        device.push_endpoint = payload.endpoint
+        device.push_p256dh = payload.p256dh
+        device.push_auth = payload.auth
+        device.last_seen_at = datetime.now(UTC)
+        if payload.label:
+            device.label = payload.label[:80]
+        session.add(device)
+
+    return SubscribeResponse(ok=True, subscribers=webpush.describe(settings)["subscribers"])
+
+
+class BriefingResponse(BaseModel):
+    id: int | None = None
+    for_date: str = ""
+    content: str = ""
+    delivered: bool = False
+    created_at: str = ""
+
+
+@router.get(
+    "/api/briefing",
+    response_model=BriefingResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+def get_briefing(settings: Settings = Depends(get_settings)) -> BriefingResponse:
+    """The most recent briefing, for the notification tap to open."""
+    from app import briefing as briefing_module
+
+    latest = briefing_module.latest(settings)
+    if latest is None:
+        return BriefingResponse()
+    return BriefingResponse(**latest)
+
+
+class RunBriefingRequest(BaseModel):
+    deliver: bool = True
+
+
+class RunBriefingResponse(BaseModel):
+    for_date: str
+    content: str
+    delivered: int
+    dropped: int
+
+
+@router.post(
+    "/api/briefing/run",
+    response_model=RunBriefingResponse,
+    dependencies=[Depends(auth.require_auth)],
+)
+async def run_briefing(
+    payload: RunBriefingRequest, settings: Settings = Depends(get_settings)
+) -> RunBriefingResponse:
+    """Compose a briefing now, rather than waiting for the morning.
+
+    Used to test the whole path without changing the clock, and genuinely
+    useful on a day that starts before Alfred expects it to.
+    """
+    from app import briefing as briefing_module
+
+    if payload.deliver:
+        result = await briefing_module.run_and_deliver(settings)
+        return RunBriefingResponse(**{k: result[k] for k in
+                                      ("for_date", "content", "delivered", "dropped")})
+
+    text = await briefing_module.compose(settings)
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    try:
+        today = datetime.now(ZoneInfo(settings.timezone)).strftime("%Y-%m-%d")
+    except Exception:
+        today = datetime.now().strftime("%Y-%m-%d")
+    briefing_module.store(text, today, settings)
+    return RunBriefingResponse(for_date=today, content=text, delivered=0, dropped=0)

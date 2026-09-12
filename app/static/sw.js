@@ -14,8 +14,27 @@ const SHELL_CACHE = "alfred-shell-v1";
 const SHELL = ["/", "/assets/app.js", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
+  /* Cache each asset separately rather than with addAll.
+   *
+   * addAll is atomic: one failed request rejects the whole thing, the worker
+   * never finishes installing, and every `navigator.serviceWorker.ready` in
+   * every tab then hangs forever waiting for an activation that will never
+   * come. Caching the shell is a convenience; it must never be able to take
+   * the page down with it. */
   event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting())
+    caches
+      .open(SHELL_CACHE)
+      .then((cache) =>
+        Promise.all(
+          SHELL.map((url) =>
+            cache.add(url).catch((error) => {
+              console.warn("Could not pre-cache", url, error);
+            })
+          )
+        )
+      )
+      .catch((error) => console.warn("Shell cache unavailable:", error))
+      .then(() => self.skipWaiting())
   );
 });
 

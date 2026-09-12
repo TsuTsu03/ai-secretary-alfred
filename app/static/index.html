@@ -242,6 +242,18 @@ body::before {
 .stat__v--amber { color: var(--signal-soft); }
 .stat__v--off { color: var(--steel-dim); }
 
+.rail__actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 11px;
+}
+.rail__actions .btn {
+  flex: 1;
+  padding: 7px 6px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
 .rootline {
   font-family: var(--mono);
   font-size: 11px;
@@ -703,6 +715,17 @@ body::before {
       <div class="stat"><span class="stat__k">Time zone</span><span class="stat__v" id="sTz">—</span></div>
       <div class="stat"><span class="stat__k">Transport</span><span class="stat__v stat__v--off" id="sNet">Local</span></div>
     </div>
+    <div class="rail__group">
+      <div class="rail__label">Morning</div>
+      <div class="stat"><span class="stat__k">Briefing</span><span class="stat__v stat__v--off" id="sBriefing">—</span></div>
+      <div class="stat"><span class="stat__k">Notifications</span><span class="stat__v stat__v--off" id="sPush">—</span></div>
+      <div class="rail__actions">
+        <button class="btn" id="pushBtn" type="button">Enable</button>
+        <button class="btn" id="briefBtn" type="button">Brief me now</button>
+      </div>
+      <div class="note" id="pushNote" hidden></div>
+    </div>
+
     <div class="rail__group">
       <div class="rail__label">Reading room</div>
       <div id="sRoots"></div>

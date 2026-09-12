@@ -24,6 +24,8 @@ const ui = {
   authVeil: el("authVeil"), tokenInput: el("tokenInput"), tokenSave: el("tokenSave"),
   sProvider: el("sProvider"), sStt: el("sStt"), sTts: el("sTts"),
   sGoogle: el("sGoogle"), sMail: el("sMail"), sUser: el("sUser"),
+  sBriefing: el("sBriefing"), sPush: el("sPush"),
+  pushBtn: el("pushBtn"), briefBtn: el("briefBtn"), pushNote: el("pushNote"),
   sTz: el("sTz"), sNet: el("sNet"), sRoots: el("sRoots"),
 };
 
@@ -157,6 +159,8 @@ function renderStatus(data) {
   ui.sGoogle.className = "stat__v" + (google.connected && hasCalendar ? " stat__v--amber" : " stat__v--off");
   ui.sMail.className = "stat__v" + (google.connected && hasMail ? " stat__v--amber" : " stat__v--off");
 
+  renderBriefing(data.briefing || {});
+
   ui.sUser.textContent = data.user_name || "—";
   ui.sTz.textContent = data.timezone || "—";
 
@@ -178,6 +182,134 @@ function renderStatus(data) {
     line.title = root.exists ? root.path : root.path + " (missing)";
     if (!root.exists) line.style.opacity = "0.45";
     ui.sRoots.appendChild(line);
+  }
+}
+
+function renderBriefing(briefing) {
+  ui.sBriefing.textContent = briefing.running ? (briefing.at || "—") : "Off";
+  ui.sBriefing.className = "stat__v" + (briefing.running ? " stat__v--amber" : " stat__v--off");
+  ui.sBriefing.title = briefing.next_run ? `Next: ${briefing.next_run}` : "";
+
+  const count = briefing.subscribers || 0;
+  const permission = ("Notification" in window) ? Notification.permission : "unsupported";
+
+  if (permission === "unsupported") {
+    ui.sPush.textContent = "Unsupported";
+  } else if (permission === "denied") {
+    ui.sPush.textContent = "Blocked";
+  } else {
+    ui.sPush.textContent = count ? `${count} device${count > 1 ? "s" : ""}` : "None";
+  }
+  ui.sPush.className = "stat__v" + (count ? " stat__v--amber" : " stat__v--off");
+
+  /* iOS delivers Web Push only to a PWA installed from a real HTTPS origin.
+   * Saying so here turns "the briefing never arrives" from a mystery into a
+   * known requirement. */
+  const standalone = window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true;
+  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+  let note = "";
+  if (permission === "denied") {
+    note = "Notifications are blocked for this site. Allow them in your browser settings.";
+  } else if (iOS && !standalone) {
+    note = "On iPhone, notifications only work once Alfred is added to the Home Screen " +
+           "(Share → Add to Home Screen) from an https address.";
+  } else if (!window.isSecureContext) {
+    note = "Notifications need a secure origin. Reach Alfred over the https://…ts.net address.";
+  }
+  ui.pushNote.textContent = note;
+  ui.pushNote.hidden = !note;
+  ui.pushBtn.textContent = count ? "Re-enable" : "Enable";
+}
+
+/* The applicationServerKey must be a Uint8Array of the raw P-256 point, and
+ * the server sends it base64url. Nothing converts that for you. */
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const output = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
+  return output;
+}
+
+async function enablePush() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    addTurn("system", "This browser cannot receive notifications.");
+    return;
+  }
+
+  ui.pushBtn.disabled = true;
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      addTurn("system", "Without permission I cannot reach you in the morning, sir.");
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const keyResponse = await api("/api/push/key");
+    const { public_key: publicKey } = await keyResponse.json();
+
+    // An existing subscription made with a different key must go, or the push
+    // service keeps accepting it and the server can never decrypt for it.
+    const existing = await registration.pushManager.getSubscription();
+    if (existing) await existing.unsubscribe();
+
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+
+    const json = subscription.toJSON();
+    const response = await api("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: json.endpoint,
+        p256dh: json.keys.p256dh,
+        auth: json.keys.auth,
+        label: navigator.platform || "Device",
+      }),
+    });
+    if (!response.ok) throw new Error(`server said ${response.status}`);
+
+    addTurn("system", "Very good. I shall wake you with the briefing.");
+    await refreshStatus();
+  } catch (error) {
+    if (String(error.message) !== "unauthorised") {
+      addTurn("system", `I could not arrange notifications: ${error.message}`);
+    }
+  } finally {
+    ui.pushBtn.disabled = false;
+  }
+}
+
+async function showBriefing(generate) {
+  ui.briefBtn.disabled = true;
+  ui.headTitle.textContent = generate ? "Preparing your briefing" : "Fetching the briefing";
+  try {
+    const response = generate
+      ? await api("/api/briefing/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deliver: false }),
+        })
+      : await api("/api/briefing");
+    const data = await response.json();
+    if (!data.content) {
+      addTurn("system", "There is no briefing yet, sir.");
+      return;
+    }
+    addTurn("alfred", data.content);
+  } catch (error) {
+    if (String(error.message) !== "unauthorised") {
+      addTurn("system", `I could not fetch the briefing: ${error.message}`);
+    }
+  } finally {
+    ui.briefBtn.disabled = false;
+    ui.headTitle.textContent = "Standing by";
   }
 }
 
@@ -778,6 +910,9 @@ function wire() {
     ui.railToggle.setAttribute("aria-expanded", String(!open));
   });
 
+  ui.pushBtn.addEventListener("click", enablePush);
+  ui.briefBtn.addEventListener("click", () => showBriefing(true));
+
   ui.pairBtn.addEventListener("click", openPairing);
   ui.pairClose.addEventListener("click", () => { ui.pairVeil.dataset.open = "false"; });
   ui.pairVeil.addEventListener("click", (event) => {
@@ -823,7 +958,16 @@ async function boot() {
   }).catch(() => {});
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker.register("/sw.js").catch((error) => {
+      // Not fatal - chat and voice work without it - but push and install do
+      // not, so record why rather than swallowing it.
+      console.warn("Service worker registration failed:", error);
+    });
+  }
+
+  // Opened from a briefing notification: show it rather than an empty console.
+  if (new URLSearchParams(location.search).get("briefing")) {
+    showBriefing(false);
   }
 }
 

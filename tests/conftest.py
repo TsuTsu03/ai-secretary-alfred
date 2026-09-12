@@ -29,3 +29,20 @@ def _clear_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in os.environ:
         if name.endswith("_API_KEY") or name.startswith("ALFRED_"):
             monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_database() -> None:
+    """Give every test its own SQLite engine.
+
+    ``app.db`` caches the engine in a module global, so without this a test
+    that builds Settings pointing at its own tmp_path still talks to whichever
+    database the *first* test happened to open. The symptom is order-dependent
+    failures that vanish when a test is run alone - "latest briefing is None"
+    failing because a previous test stored one.
+    """
+    from app.db import reset_engine
+
+    reset_engine()
+    yield
+    reset_engine()

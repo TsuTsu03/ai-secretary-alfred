@@ -144,6 +144,11 @@ class Settings(BaseSettings):
     # skipped: a large log or dataset still has a useful head.
     index_max_chars: int = Field(default=400_000, alias="ALFRED_INDEX_MAX_CHARS")
 
+    # ---- daily briefing -----------------------------------------------------
+    briefing_enabled: bool = Field(default=True, alias="ALFRED_BRIEFING_ENABLED")
+    briefing_hour: int = Field(default=7, alias="ALFRED_BRIEFING_HOUR")
+    briefing_minute: int = Field(default=0, alias="ALFRED_BRIEFING_MINUTE")
+
     # ---- server -------------------------------------------------------------
     host: str = Field(default="127.0.0.1", alias="ALFRED_HOST")
     port: int = Field(default=8757, alias="ALFRED_PORT")

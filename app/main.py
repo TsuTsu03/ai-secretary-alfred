@@ -168,10 +168,16 @@ async def lifespan(app: FastAPI):
 
     roots = settings.file_roots
     logger.info("Readable roots: %s", ", ".join(str(r) for r in roots) or "(none)")
+
+    from app.jobs import scheduler
+
+    scheduler.start(settings)
+
     logger.info("Alfred ready at %s  (data: %s)", settings.base_url, settings.data_dir)
     try:
         yield
     finally:
+        scheduler.shutdown()
         logger.info("Alfred shutting down.")
 
 
